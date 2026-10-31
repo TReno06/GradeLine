@@ -14,6 +14,11 @@ import { loadProjectBytes, setActiveHandle } from './jobs.ts';
 function registerServiceWorker(){
   if (!('serviceWorker' in navigator)) return;
   if (location.protocol !== 'http:' && location.protocol !== 'https:') return;
+  // The Tauri desktop build (PLAN.md Stage 5) serves these same files from
+  // http://tauri.localhost — a service worker there would only cache an
+  // app that's already local, and could keep serving the old version after
+  // an installer update.
+  if ('__TAURI_INTERNALS__' in window) return;
   try {
     navigator.serviceWorker.register('./sw.js').catch(function(){ /* offline first load, or unsupported — fine either way */ });
   } catch (err: unknown){ /* never let PWA plumbing break the app itself */ }
@@ -33,5 +38,22 @@ function consumeLaunchFiles(){
   } catch (err: unknown){ /* never let PWA plumbing break the app itself */ }
 }
 
+// Desktop-app equivalent of consumeLaunchFiles: Windows passes a
+// double-clicked .gradeline file's path on the command line, and the Rust
+// side (desktop/src-tauri/src/main.rs) hands over its name and bytes.
+// There's no FileSystemFileHandle for a command-line path, so a later
+// "Save" goes through the Save As dialog rather than overwriting in place.
+function consumeTauriLaunchFile(){
+  var tauri = window.__TAURI__;
+  if (!tauri || !tauri.core) return;
+  tauri.core.invoke<string | null>('launch_file_name').then(async function(name){
+    if (!name) return;
+    var buf = await tauri.core.invoke<ArrayBuffer>('launch_file_bytes');
+    setActiveHandle(null);
+    await loadProjectBytes(new Uint8Array(buf), name);
+  }).catch(function(){ /* never let launch plumbing break the app itself */ });
+}
+
 registerServiceWorker();
 consumeLaunchFiles();
+consumeTauriLaunchFile();

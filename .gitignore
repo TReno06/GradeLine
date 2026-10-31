@@ -2,3 +2,5 @@ node_modules/
 app/dist/
 tinviewer_artifact.html
 GradeLine-installer.zip
+desktop/src-tauri/target/
+desktop/src-tauri/gen/

@@ -23,7 +23,7 @@ import {
 } from './driveway/sectionTable.ts';
 import { computeCrossfallSeriesFrom, computeCrossfallSeriesPerpendicular } from './crossfall.ts';
 import { pointAtChainage, chainageOfClosestPoint } from './geometry/chainage.ts';
-import type { ProfileSample, GradeBreak, DrivewayProfile, SectionTable, DecodedPngImage, DeclutterLabelInput, CrossfallTable, GroundRLAt } from './types.ts';
+import type { ProfileSample, GradeBreak, DrivewayProfile, SectionTable, DecodedPngImage, DeclutterLabelInput, CrossfallTable, GroundRLAt, FileSystemFileHandleLike } from './types.ts';
 
 type ExportMode = 'existing' | 'proposed' | 'both';
 // exportSectionDXF filters out null-elevation samples before any of
@@ -120,12 +120,37 @@ export function saveFileViaBlobLink(filename: string, data: FileData){
   URL.revokeObjectURL(url);
 }
 
+// The Tauri desktop build (PLAN.md Stage 5) doesn't perform browser
+// downloads at all — <a download> silently does nothing there — so it
+// gets a native Save As dialog instead (the same File System Access API
+// jobs.ts already uses for Save/Open). Everywhere else keeps the ordinary
+// download link.
+async function saveLocal(filename: string, data: FileData){
+  if (!('__TAURI_INTERNALS__' in window) || typeof window.showSaveFilePicker !== 'function'){
+    saveFileViaBlobLink(filename, data);
+    return;
+  }
+  var handle: FileSystemFileHandleLike;
+  try {
+    handle = await window.showSaveFilePicker({suggestedName: filename});
+  } catch (err: unknown){
+    return; // user cancelled the dialog
+  }
+  try {
+    var writable = await handle.createWritable();
+    await writable.write(data as BufferSource | string | Blob);
+    await writable.close();
+  } catch (err: any){
+    alert('Couldn’t save "' + filename + '": ' + (err && err.message ? err.message : 'unknown error'));
+  }
+}
+
 export async function saveFile(filename: string, data: FileData){
   var downloads = await getDownloadsCapability();
   if (!downloads){
     // Not running inside the hosted artifact page (e.g. this file was
     // saved and opened locally) — fall back to a normal browser download.
-    saveFileViaBlobLink(filename, data);
+    await saveLocal(filename, data);
     return;
   }
   try {
@@ -145,7 +170,7 @@ export async function saveFile(filename: string, data: FileData){
 async function saveDXF(baseName: string, dxfText: string){
   var downloads = await getDownloadsCapability();
   if (!downloads){
-    saveFileViaBlobLink(baseName + '.dxf', dxfText);
+    await saveLocal(baseName + '.dxf', dxfText);
     return;
   }
   var zipBytes = makeZip(baseName + '.dxf', dxfText);

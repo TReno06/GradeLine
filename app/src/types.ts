@@ -355,6 +355,15 @@ declare global {
   }
 }
 
+// Tauri desktop build's global API (app.withGlobalTauri in
+// desktop/src-tauri/tauri.conf.json) — only `core.invoke` is used, for
+// the double-clicked .gradeline launch (see pwa.ts, desktop main.rs).
+declare global {
+  interface Window {
+    __TAURI__?: { core: { invoke<T = unknown>(cmd: string, args?: Record<string, unknown>): Promise<T> } };
+  }
+}
+
 export type ViewName = '3d' | 'profile' | 'split' | 'driveway' | 'crossfall';
 
 // The DOM-only settings a project file also needs to save/restore

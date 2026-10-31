@@ -6,10 +6,20 @@ a straight-grade driveway design over it with AS 2890.1 compliance checks.
 It's a lightweight, no-install alternative to 12d Model / Civil3D for that one
 job, not a general CAD replacement.
 
-**Use it:** <https://treno06.github.io/GradeLine/>. In Chrome or Edge you can
-install it as an app (it then works offline and opens `.gradeline` job files).
-Or download [`tinviewer.html`](tinviewer.html) and open it directly: it's one
-self-contained file with no server and no network access needed.
+## Get it
+
+- **Windows desktop app:** download `GradeLine_x.y.z_x64-setup.exe` from the
+  [latest release](https://github.com/TReno06/GradeLine/releases/latest) and run
+  it. It installs for your user only, so no admin rights are needed. The
+  installer isn't code-signed, so Windows may say "Windows protected your PC":
+  choose **More info → Run anyway**. The first time you double-click a
+  `.gradeline` job, Windows asks which app to use: pick GradeLine and **Always**.
+- **In the browser:** <https://treno06.github.io/GradeLine/>. In Chrome or Edge
+  you can install it as an app (it then works offline and opens `.gradeline`
+  job files).
+- **Single file:** download [`tinviewer.html`](tinviewer.html) and open it
+  directly. It's one self-contained file with no server and no network access
+  needed.
 
 ## Features
 
@@ -42,3 +52,13 @@ node test/run_tests.mjs    # unit tests (Node 22.18+ for native TS type strippin
 PowerShell scripts that add Desktop and Start Menu shortcuts without needing
 admin rights. Pushing to `main` deploys `app/dist` to GitHub Pages
 (`.github/workflows/deploy-pages.yml`).
+
+`desktop/` is the Windows desktop app: a [Tauri 2](https://tauri.app) shell
+around the same `app/` build. With Rust and the Visual Studio C++ Build Tools
+installed:
+
+```sh
+cd desktop
+npm ci
+npx tauri build   # builds app/ first; installer lands in src-tauri/target/release/bundle/nsis/
+```
