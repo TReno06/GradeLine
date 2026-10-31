@@ -9,8 +9,8 @@ job, not a general CAD replacement.
 ## Get it
 
 - **Windows desktop app:** download `GradeLine_x.y.z_x64-setup.exe` from the
-  [latest release](https://github.com/TReno06/GradeLine/releases/latest) and run
-  it. It installs for your user only, so no admin rights are needed. The
+  [latest release](https://github.com/TReno06/GradeLine/releases/latest) (also
+  kept in [`releases/`](releases/) in this repo) and run it. It installs for your user only, so no admin rights are needed. The
   installer isn't code-signed, so Windows may say "Windows protected your PC":
   choose **More info → Run anyway**. The first time you double-click a
   `.gradeline` job, Windows asks which app to use: pick GradeLine and **Always**.
@@ -60,5 +60,5 @@ installed:
 ```sh
 cd desktop
 npm ci
-npx tauri build   # builds app/ first; installer lands in src-tauri/target/release/bundle/nsis/
+npm run build   # builds app/ first; installer lands in src-tauri/target/release/bundle/nsis/
 ```

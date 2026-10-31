@@ -4,7 +4,7 @@
   "description": "GradeLine as a Windows desktop app (PLAN.md Stage 5): a Tauri shell around the same app/ build.",
   "scripts": {
     "tauri": "tauri",
-    "build": "tauri build",
+    "build": "node scripts/build.mjs",
     "dev": "tauri dev"
   },
   "devDependencies": {
