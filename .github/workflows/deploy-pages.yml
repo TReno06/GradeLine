@@ -1,19 +1,11 @@
 # GradeLine — deploy the Vite build to GitHub Pages (PLAN.md Stage 4).
 #
-# DORMANT while this folder lives nested inside a larger repo: GitHub
-# Actions only reads .github/workflows at the actual repo root, and today
-# that root is one level up from here. This file is written as if
-# GradeLine/ itself is the repo root (paths below — app/package.json,
-# app/dist — are relative to that future root) because the plan is to
-# split GradeLine into its own repo once Stage 4 is tested and confirmed
-# working. Once that split happens, this workflow starts running as-is,
-# no edits needed. Until then it's inert — it won't appear in Actions at
-# all for the current (nested) location.
-#
-# Also requires, as a one-time manual step after the split (neither of
-# which this workflow or any automated tool does on your behalf):
-# Settings -> Pages -> Source: "GitHub Actions", on a public repo (or a
-# private one on a paid plan that supports Pages).
+# Runs in the public TReno06/GradeLine repo, whose root is this GradeLine/
+# folder (paths below — app/package.json, app/dist — are relative to it);
+# live at https://treno06.github.io/GradeLine/. Pages is set to
+# Settings -> Pages -> Source: "GitHub Actions" there. Inert in any repo
+# where this folder is nested (Actions only reads .github/workflows at the
+# real repo root), e.g. the private working copy it's synced from.
 name: Deploy GradeLine to GitHub Pages
 
 on:
