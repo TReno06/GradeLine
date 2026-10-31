@@ -1,0 +1,22 @@
+{
+  "name": "gradeline-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build && node scripts/copy-to-production.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "delaunator": "5.1.0",
+    "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.186.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
+    "vite-plugin-singlefile": "2.3.3"
+  }
+}

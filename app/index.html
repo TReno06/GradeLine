@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GradeLine</title>
+<link rel="icon" type="image/png" href="data:image/png;base64,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">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<!-- PWA (PLAN.md Stage 4) — manifest.json/sw.js/icon-*.png live in app/public/, copied verbatim
+     alongside this file's own singlefile build output, not inlined into it. Relative URLs
+     throughout since GitHub Pages without a custom domain serves from a subpath. -->
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#0E0E10">
+<style>
+  :root{
+    --bg: #0E0E10;
+    --panel: #161618;
+    --panel-raised: #1D1D20;
+    --line: #2C2C2F;
+    --line-soft: #202022;
+    --text: #F2F0EC;
+    --text-dim: #9A9A9E;
+    --text-faint: #68686C;
+    --brass: #F26722;
+    --brass-dim: #C44F16;
+    --cyan: #F26722;
+    --danger: #C0564A;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    font-size: 14px;
+    overflow: hidden;
+  }
+  .mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+
+  #app {
+    display: grid;
+    grid-template-columns: 300px 1fr;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* ---------- Sidebar ---------- */
+  #sidebar {
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .brand {
+    padding: 18px 18px 14px 18px;
+    border-bottom: 1px solid var(--line);
+  }
+  .brand-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .brand-logo {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    flex-shrink: 0;
+    display: block;
+  }
+  .brand h1 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+  .brand p {
+    margin: 4px 0 0 0;
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+  .section {
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .section h2 {
+    margin: 0 0 10px 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+  }
+  .field { margin-bottom: 10px; }
+  .field:last-child { margin-bottom: 0; }
+  .field label {
+    display: block;
+    font-size: 11.5px;
+    color: var(--text-dim);
+    margin-bottom: 5px;
+  }
+  .filerow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .btn {
+    background: var(--panel-raised);
+    border: 1px solid var(--line);
+    color: var(--text);
+    padding: 7px 12px;
+    border-radius: 3px;
+    font-size: 12.5px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: border-color 0.12s ease, background 0.12s ease;
+  }
+  .btn:hover { border-color: var(--brass-dim); background: #242426; }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary {
+    background: var(--brass);
+    border-color: var(--brass);
+    color: #180A00;
+    font-weight: 600;
+  }
+  .btn.primary:hover { background: #FF7A3D; border-color: #FF7A3D; }
+  .btn.wide { width: 100%; }
+  .btn.small { padding: 5px 9px; font-size: 11.5px; }
+  input[type=file] { display: none; }
+  .filename {
+    font-size: 11px;
+    color: var(--text-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .filename.loaded { color: var(--cyan); }
+
+  input[type=range] {
+    width: 100%;
+    accent-color: var(--brass);
+  }
+  input[type=number] {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    color: var(--text);
+    padding: 6px 8px;
+    border-radius: 3px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+  }
+  input[type=number]:focus { outline: none; border-color: var(--brass-dim); }
+
+  .rangeval {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-faint);
+    margin-top: 3px;
+  }
+
+  select {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    color: var(--text);
+    padding: 6px 8px;
+    border-radius: 3px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+  }
+  select:focus { outline: none; border-color: var(--brass-dim); }
+
+  .notice {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: rgba(242,103,34,0.08);
+    border: 1px solid rgba(242,103,34,0.25);
+    border-radius: 3px;
+    font-size: 11px;
+    color: var(--cyan);
+    line-height: 1.5;
+    display: none;
+  }
+  .divider-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 2px 0 12px 0;
+    font-size: 10.5px;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .divider-label::before, .divider-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--line-soft);
+  }
+
+  .toggle-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .toggle-row button {
+    flex: 1 1 30%;
+    min-width: 78px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    color: var(--text-dim);
+    padding: 8px 4px;
+    font-family: inherit;
+    font-size: 11.5px;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .toggle-row button.active {
+    background: var(--brass);
+    border-color: var(--brass);
+    color: #180A00;
+    font-weight: 600;
+  }
+
+  .checkrow {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12.5px;
+    color: var(--text-dim);
+    cursor: pointer;
+    margin-bottom: 8px;
+  }
+  .checkrow:last-child { margin-bottom: 0; }
+  .checkrow input { accent-color: var(--brass); }
+
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    font-size: 12px;
+  }
+  .stat-row .k { color: var(--text-dim); }
+  .stat-row .v { color: var(--text); }
+
+  .layer-quick-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .layer-quick-row .btn { flex: 1; }
+  .export-mode-row { display: flex; gap: 8px; }
+  .export-mode-row .btn { flex: 1; }
+  .export-mode-row .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .layer-filter-list {
+    max-height: 220px;
+    overflow-y: auto;
+    margin-top: 10px;
+    padding-right: 2px;
+  }
+  .layer-row { justify-content: space-between; }
+  .layer-count { color: var(--text-faint); font-size: 10.5px; margin-left: auto; padding-left: 8px; }
+
+  .diag-row {
+    font-size: 11.5px;
+    line-height: 1.5;
+    padding: 8px 10px;
+    border-radius: 3px;
+    margin-bottom: 6px;
+  }
+  .diag-row:last-child { margin-bottom: 0; }
+  .diag-warn {
+    background: rgba(192,86,74,0.10);
+    border: 1px solid rgba(192,86,74,0.28);
+    color: #E08A7D;
+  }
+  .diag-ok {
+    background: rgba(242,103,34,0.06);
+    border: 1px solid rgba(242,103,34,0.18);
+    color: var(--text-dim);
+  }
+
+  .pvi-table { font-size: 11px; }
+  .pvi-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 0.8fr 0.9fr 20px;
+    gap: 5px;
+    align-items: center;
+    margin-bottom: 5px;
+  }
+  .pvi-head {
+    color: var(--text-faint);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 7px;
+  }
+  .pvi-row input[type=number] { padding: 5px 6px; font-size: 11px; }
+  .pvi-existing, .pvi-cutfill { color: var(--text-dim); font-size: 10.5px; }
+  .pvi-del {
+    background: none;
+    border: none;
+    color: var(--text-faint);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    padding: 0;
+  }
+  .pvi-del:hover { color: #E08A7D; }
+
+  .section-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: var(--brass);
+    color: #180A00;
+    font-size: 9.5px;
+    font-weight: 700;
+    margin-right: 6px;
+    vertical-align: middle;
+    position: relative;
+    top: -1px;
+  }
+
+  #sidebar-footer {
+    margin-top: auto;
+    padding: 14px 18px;
+    border-top: 1px solid var(--line);
+    font-size: 11px;
+    color: var(--text-faint);
+    line-height: 1.5;
+  }
+
+  /* ---------- Main viewport ---------- */
+  #main {
+    position: relative;
+    overflow: hidden;
+    background: var(--bg);
+  }
+  #topbar {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 46px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 18px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(18,24,28,0.72);
+    backdrop-filter: blur(6px);
+    z-index: 5;
+  }
+  #topbar .viewlabel {
+    font-size: 13px;
+    font-weight: 600;
+  }
+  #topbar .hint {
+    font-size: 11.5px;
+    color: var(--text-faint);
+  }
+
+  #viewport-3d, #viewport-profile {
+    position: absolute;
+    left: 0; right: 0;
+    top: 0; bottom: 0;
+  }
+  #viewport-3d.pane-top { bottom: 45%; }
+  #viewport-profile.pane-bottom { top: 55%; border-top: 1px solid var(--line); }
+  #viewport-profile.pane-left { right: 380px; }
+  #main.split-mode #legend,
+  #main.split-mode #point-inspector {
+    bottom: calc(45% + 18px);
+  }
+
+  /* ---------- Driveway design (dedicated tab) ---------- */
+  #driveway-panel {
+    display: none;
+    position: absolute;
+    top: 46px; right: 0; bottom: 0;
+    width: 380px;
+    background: var(--panel);
+    border-left: 1px solid var(--line);
+    overflow-y: auto;
+    z-index: 3;
+  }
+  #main.driveway-mode #driveway-panel { display: block; }
+  #driveway-panel .empty-note {
+    padding: 16px 18px;
+    color: var(--text-dim);
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+
+  /* ---------- Crossfall (dedicated tab) ---------- */
+  #crossfall-panel {
+    display: none;
+    position: absolute;
+    top: 46px; right: 0; bottom: 0;
+    width: 380px;
+    background: var(--panel);
+    border-left: 1px solid var(--line);
+    overflow-y: auto;
+    z-index: 3;
+  }
+  #main.crossfall-mode #crossfall-panel { display: block; }
+  #crossfall-panel .empty-note {
+    padding: 16px 18px;
+    color: var(--text-dim);
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+
+  #legend {
+    position: absolute;
+    bottom: 18px;
+    left: 18px;
+    background: rgba(24,32,36,0.85);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 10px 12px;
+    z-index: 4;
+  }
+  #legend .bar {
+    width: 160px;
+    height: 10px;
+    border-radius: 2px;
+    margin-bottom: 5px;
+  }
+  #legend .labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10.5px;
+    color: var(--text-dim);
+  }
+  #legend .title {
+    font-size: 10.5px;
+    color: var(--text-faint);
+    margin-bottom: 6px;
+  }
+
+  #point-inspector {
+    position: absolute;
+    bottom: 18px;
+    right: 18px;
+    background: rgba(24,32,36,0.9);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 10px 12px;
+    z-index: 5;
+    font-size: 12px;
+    min-width: 150px;
+  }
+  #point-inspector .title {
+    font-size: 10.5px;
+    color: var(--text-faint);
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  #point-inspector .close-btn {
+    cursor: pointer;
+    color: var(--text-faint);
+    font-size: 14px;
+    line-height: 1;
+  }
+  #point-inspector .close-btn:hover { color: var(--text); }
+
+  #empty-state {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    text-align: center;
+    padding: 40px;
+    color: var(--text-dim);
+  }
+  #empty-state h2 {
+    color: var(--text);
+    font-size: 18px;
+    font-weight: 600;
+    margin: 14px 0 8px 0;
+  }
+  #empty-state p {
+    max-width: 380px;
+    line-height: 1.6;
+    font-size: 13px;
+    margin: 0 0 18px 0;
+  }
+  #empty-state svg { opacity: 0.5; }
+
+  #triangulating-overlay {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    text-align: center;
+    padding: 40px;
+    color: var(--text-dim);
+    background: rgba(14,14,16,0.72);
+    z-index: 5;
+  }
+  #triangulating-overlay .spinner {
+    width: 36px; height: 36px;
+    border: 3px solid rgba(242,103,34,0.25);
+    border-top-color: #F26722;
+    border-radius: 50%;
+    animation: tri-spin 0.8s linear infinite;
+    margin-bottom: 16px;
+  }
+  @keyframes tri-spin { to { transform: rotate(360deg); } }
+  #triangulating-overlay p { font-size: 13px; margin: 0 0 16px 0; color: var(--text); }
+
+  canvas { display: block; }
+
+  #profile-tooltip {
+    position: absolute;
+    display: none;
+    background: rgba(24,32,36,0.95);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 6px 9px;
+    font-size: 11.5px;
+    pointer-events: none;
+    z-index: 6;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="sidebar">
+    <div class="brand">
+      <div class="brand-row">
+        <img class="brand-logo" alt="" src="data:image/png;base64,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">
+        <h1>GradeLine</h1>
+      </div>
+      <p>Build a triangulated surface from survey points, then read the existing terrain along an alignment.</p>
+    </div>
+
+    <div class="section">
+      <h2>Job</h2>
+      <div class="field">
+        <label>Save the loaded data, driveway design(s) and view settings to a <span class="mono">.gradeline</span> file, or reopen one later &mdash; picks up right where you left off, with no need to re-upload the DXF or rebuild the driveway design.</label>
+      </div>
+      <div class="export-mode-row">
+        <button class="btn small" id="btn-job-save">Save</button>
+        <button class="btn small" id="btn-job-save-as">Save As</button>
+        <button class="btn small" id="btn-job-open">Open</button>
+      </div>
+      <div class="filename" id="job-status" style="margin-top:6px;">No job loaded</div>
+      <input type="file" id="input-project" accept=".gradeline" style="display:none;">
+    </div>
+
+    <div class="section">
+      <h2>Load from DXF</h2>
+      <div class="field">
+        <div class="filerow">
+          <button class="btn small" id="btn-load-dxf">Upload DXF</button>
+          <span class="filename" id="dxf-filename">No file loaded</span>
+        </div>
+        <input type="file" id="input-dxf" accept=".dxf">
+      </div>
+      <div class="field">
+        <label>Reads POINT and 3DFACE entities as survey shots (no need to strip the drawing down first — untick unwanted layers below instead). Among LWPOLYLINE/POLYLINE entities, ones with a non-zero elevation are treated as contour lines (folded into the surface); flat ones on a layer named like "alignment" become selectable long-section alignments.</label>
+      </div>
+      <div class="notice" id="dxf-notice"></div>
+    </div>
+
+    <div class="section" id="section-layer-filter" style="display:none;">
+      <h2>Point layers</h2>
+      <div class="field">
+        <label>Only checked layers feed the TIN — untick text, blocks, or stray layers instead of cleaning the DWG by hand before export.</label>
+      </div>
+      <div class="layer-quick-row">
+        <button class="btn small" id="btn-layers-all" type="button">All</button>
+        <button class="btn small" id="btn-layers-none" type="button">None</button>
+      </div>
+      <div id="layer-filter-list" class="layer-filter-list"></div>
+    </div>
+
+    <div class="section" id="section-alignment-select" style="display:none;">
+      <h2>Alignment</h2>
+      <div class="field">
+        <label>Detected from a layer named like "alignment" in the DXF. Switch between alignments without re-uploading.</label>
+      </div>
+      <select id="select-alignment"></select>
+    </div>
+
+    <div class="section">
+      <button class="btn wide" id="btn-clear-data" style="border-color: var(--danger);">Clear loaded data</button>
+    </div>
+
+    <div class="section">
+      <h2>Display</h2>
+      <div class="field">
+        <label>View</label>
+        <div class="toggle-row">
+          <button id="tab-3d" class="active">3D surface</button>
+          <button id="tab-profile">Existing terrain</button>
+          <button id="tab-split">Split view</button>
+          <button id="tab-driveway">Driveway</button>
+          <button id="tab-crossfall">Crossfall</button>
+        </div>
+      </div>
+      <div class="field">
+        <button class="btn wide" id="btn-print-view">Save this screen as PDF</button>
+        <label style="margin-top:6px;">Captures exactly what's shown above right now &mdash; 3D, existing terrain, driveway design, or both panes together in split view &mdash; and writes a PDF file straight to disk, no print dialog.</label>
+      </div>
+      <div class="field">
+        <label>Vertical exaggeration &mdash; <span class="mono" id="ve-val">1.0&times;</span></label>
+        <input type="range" id="ve-slider" min="1" max="10" step="0.5" value="1">
+      </div>
+      <div class="field" id="field-sample-interval">
+        <label>Existing terrain sample interval</label>
+        <input type="number" id="sample-interval" value="2" min="0.1" step="0.1">
+      </div>
+      <div class="field" id="field-profile-scale">
+        <label class="checkrow"><input type="checkbox" id="chk-profile-true-scale" checked> True scale (1:1 &mdash; matches what plots in AutoCAD)</label>
+        <label>On by default, so what you see matches the real ground and what's exported. Untick to auto-fit elevation to the window instead (exaggerates it — ratio shown on the chart).</label>
+      </div>
+      <div class="field" id="field-grade-break">
+        <label>Grade-break sensitivity (elevation tolerance)</label>
+        <input type="number" id="grade-break-tolerance" value="0.05" min="0.001" step="0.01">
+        <label style="margin-top:6px;">Chainage lines are marked at the start, end, and anywhere the ground deviates from a straight grade by more than this &mdash; lower catches more/subtler breaks. Grade % between each break is shown on the chart and written into the DXF export too.</label>
+      </div>
+      <div class="field" id="field-chainage-interval">
+        <label class="checkrow"><input type="checkbox" id="chk-chainage-interval"> Regular chainage marks every</label>
+        <input type="number" id="chainage-interval-value" value="10" min="0.1" step="1">
+        <label style="margin-top:6px;">Adds an evenly-spaced chainage + existing-ground level (RL) reading ladder at this spacing, independent of the grade-break lines above &mdash; e.g. every 1m, 5m or 10m. Shown in gray on the chart and written into the DXF export on its own layer (CHAINAGE_INTERVALS) so it never clashes with the grade-break marks.</label>
+      </div>
+      <div class="field" id="field-datum">
+        <label class="checkrow"><input type="checkbox" id="chk-datum"> Show a datum line at RL</label>
+        <input type="number" id="datum-rl" step="0.001" placeholder="e.g. 30.000">
+        <label style="margin-top:6px;">You set this manually — GradeLine doesn't pick it for you. Drawn as a horizontal reference line right across the section (chart and DXF export, on its own DATUM layer), labelled with its RL at both ends, same as a datum line on a council long-section drawing.</label>
+      </div>
+      <div class="field">
+        <label class="checkrow"><input type="checkbox" id="chk-ignore-zero" checked> Ignore points with elevation (Z) = 0</label>
+        <label class="checkrow"><input type="checkbox" id="chk-ignore-far"> Ignore points beyond a coordinate limit</label>
+      </div>
+      <div class="field" id="field-far-limit">
+        <label>Max |X| or |Y| from the survey origin (drops stray/outlier clusters, e.g. mismatched grid points) — off by default, set a value and tick the box above if you need it</label>
+        <input type="number" id="far-limit" value="0" min="0" step="1">
+      </div>
+      <div class="notice" id="filter-notice"></div>
+      <div class="field" style="margin-top:10px;">
+        <label class="checkrow"><input type="checkbox" id="chk-wireframe"> Show triangulation edges</label>
+        <label class="checkrow"><input type="checkbox" id="chk-points"> Show survey points</label>
+        <label class="checkrow" id="row-chk-alignment"><input type="checkbox" id="chk-alignment" checked> Show alignment on surface</label>
+      </div>
+    </div>
+
+    <div class="section" id="section-stats" style="display:none;">
+      <h2>Summary</h2>
+      <div class="stat-row mono"><span class="k">Points</span><span class="v" id="stat-points">&mdash;</span></div>
+      <div class="stat-row mono"><span class="k">Triangles</span><span class="v" id="stat-triangles">&mdash;</span></div>
+      <div class="stat-row mono"><span class="k">Elevation range</span><span class="v" id="stat-elev">&mdash;</span></div>
+      <div class="stat-row mono"><span class="k">Alignment length</span><span class="v" id="stat-length">&mdash;</span></div>
+    </div>
+
+    <div class="section" id="section-diagnostics" style="display:none;">
+      <h2>Diagnostics</h2>
+      <div id="diagnostics-body"></div>
+    </div>
+
+    <div class="section" id="section-export-surface" style="display:none;">
+      <h2>Export surface</h2>
+      <button class="btn wide" id="btn-export-surface-dxf">Download TIN surface (DXF, .zip)</button>
+      <div class="field" style="margin-top:8px;">
+        <label>Triangles written as 3DFACE entities in true X,Y,Z, zipped for download &mdash; unzip and open the .dxf directly in AutoCAD/Civil 3D.</label>
+      </div>
+    </div>
+
+    <div class="section" id="section-export" style="display:none;">
+      <h2>Export long section</h2>
+      <button class="btn wide" id="btn-export-csv" style="margin-bottom:8px;">Download existing terrain (CSV)</button>
+      <div class="export-mode-row">
+        <button class="btn" id="btn-export-section-existing">Existing</button>
+        <button class="btn" id="btn-export-section-proposed">Proposed</button>
+        <button class="btn" id="btn-export-section-both">Both</button>
+      </div>
+      <div class="field" style="margin-top:8px;">
+        <label>DXF of the current long section. <b>Existing</b> plots the existing-ground polyline only; <b>Proposed</b> plots the driveway design polyline only (needs a driveway design turned on); <b>Both</b> plots them together. The CAD-style section table (Distance/Existing Grade/New Grade/Existing Level/Proposed Level/Chainage) is always the full comparison regardless of which button you use, plus chainage tick marks, a regular chainage/RL ladder if enabled above, and the datum line if set. Opens directly in AutoCAD; apply your own plot scale.</label>
+      </div>
+    </div>
+
+    <div id="sidebar-footer">
+      Triangulation is Delaunay on X/Y only &mdash; breaklines aren't modelled. Existing-terrain elevations are barycentric-interpolated from the TIN at each sample chainage.
+    </div>
+  </div>
+
+  <div id="main">
+    <div id="topbar">
+      <span class="viewlabel" id="view-title">3D surface</span>
+      <span class="hint" id="view-hint">Drag to orbit &middot; scroll to zoom &middot; shift-drag to pan</span>
+    </div>
+
+    <div id="viewport-3d"></div>
+    <div id="viewport-profile" style="display:none;">
+      <canvas id="profile-canvas"></canvas>
+      <div id="profile-tooltip"></div>
+    </div>
+
+    <div id="driveway-panel">
+      <div class="section">
+        <h2>Driveway design (proposed)</h2>
+        <div class="field">
+          <label class="checkrow"><input type="checkbox" id="dw-enable"> Design a proposed driveway profile</label>
+          <label style="margin-top:6px;">Lay a straight-grade-between-points design over the existing ground and check it against configurable grade/transition limits. This is a screening aid, not a substitute for checking the current AS 2890.1 clause text or your engineer's sign-off before council submission.</label>
+        </div>
+      </div>
+      <div id="dw-no-profile" class="empty-note" style="display:none;">Load a surface and set an alignment to generate an existing-terrain profile first &mdash; driveway design builds on top of it.</div>
+      <div id="dw-body" style="display:none;">
+        <div class="section">
+          <h2><span class="section-num">1</span>Kerb &amp; invert</h2>
+          <div class="field">
+            <label>Kerb invert chainage</label>
+            <input type="number" id="dw-kerb-invert-chainage" step="0.1" placeholder="e.g. 0.00">
+          </div>
+          <div class="field">
+            <label>Kerb invert RL (gutter level)</label>
+            <input type="number" id="dw-kerb-invert-rl" step="0.001" placeholder="e.g. 25.000">
+          </div>
+          <div class="field">
+            <label>Kerb reveal (mm) — rise from invert to top of kerb</label>
+            <input type="number" id="dw-kerb-reveal" step="1" placeholder="e.g. 30">
+          </div>
+          <button class="btn small" id="dw-apply-kerb" type="button">Set kerb points</button>
+          <label style="margin-top:6px;">All manual, since every council's kerb detail is different — and since another design point (e.g. the alignment's start) is often already sitting at chainage 0, the kerb's own chainage is never assumed either. Modelled as a vertical face at the chainage you enter (no horizontal run) — the invert, then the top of kerb directly above it — rather than a sloped leg, since that's what a kerb face physically is. Skip this if the driveway starts flush at ground level with no kerb face to model.</label>
+        </div>
+        <div class="section">
+          <h2><span class="section-num">2</span>Layback / crossover template</h2>
+          <div style="display:flex; gap:8px; margin-bottom:6px;">
+            <input type="number" id="dw-leg1-rise" step="1" value="25" placeholder="Road-side rise (mm)">
+            <input type="number" id="dw-leg1-run" step="1" value="450" placeholder="Road-side run (mm)">
+          </div>
+          <div style="display:flex; gap:8px; margin-bottom:6px;">
+            <input type="number" id="dw-leg2-rise" step="1" value="70" placeholder="Property-side rise (mm)">
+            <input type="number" id="dw-leg2-run" step="1" value="450" placeholder="Property-side run (mm)">
+          </div>
+          <button class="btn small" id="dw-apply-layback" type="button">Apply layback template</button>
+          <label style="margin-top:6px;">Two rise-over-run legs read off your council's standard layback detail, one either side of the kerb invert (defaults shown match a typical two-segment layback — check yours): the road-side leg runs back from the invert (rising away from it, since the invert is the low point of the gutter), the property-side leg runs forward from the top of kerb, same as before. Both are a fixed council-drawing shape, not something AS 2890.1 governs, so neither is checked against your grade limits below — they show on the chart/table/DXF as their rise/run in mm rather than a graded percentage. Replaces any previously-applied layback points and anything else within the new span, keeping the kerb points and everything beyond it.</label>
+        </div>
+        <div class="section">
+          <h2><span class="section-num">3</span>Design points (chainage / RL)</h2>
+          <div class="pvi-table">
+            <div class="pvi-row pvi-head">
+              <span>Chainage</span><span>Design RL</span><span>Existing</span><span>Cut/Fill</span><span></span>
+            </div>
+            <div id="dw-pvi-body"></div>
+          </div>
+          <button class="btn small" id="dw-add-point" type="button" style="margin-top:8px;">+ Add point</button>
+          <label style="margin-top:8px;">Rows are always kept sorted by chainage automatically. Two points at the exact same chainage are treated as a vertical face (e.g. a kerb reveal) rather than a graded leg.</label>
+        </div>
+        <div class="section">
+          <h2><span class="section-num">4</span>Compliance rules</h2>
+          <div class="field">
+            <label>Maximum grade within the property (%) — AS 2890.1 (1993) Cl 3.5(b): 1 in 5</label>
+            <input type="number" id="dw-max-grade" value="20" min="0" step="0.5">
+          </div>
+          <div class="field">
+            <label class="checkrow"><input type="checkbox" id="dw-chk-boundary" checked> Apply a stricter limit to the first leg (across the footpath, kerb to boundary)</label>
+            <input type="number" id="dw-max-grade-boundary" value="5" min="0" step="0.5">
+            <label style="margin-top:6px;">AS 2890.1 (1993) Cl 3.5(a): 1 in 20 across the footpath, between the edge of the road and the property boundary.</label>
+          </div>
+          <div class="field">
+            <label>Grade-change transition threshold (%) and minimum transition length (m) — AS 2890.1 (1993) Cl 2.5.3(c)</label>
+            <div style="display:flex; gap:8px;">
+              <input type="number" id="dw-transition-threshold" value="12.5" min="0" step="0.5">
+              <input type="number" id="dw-min-transition-length" value="2" min="0" step="0.5">
+            </div>
+            <label style="margin-top:6px;">Grade changes over 12.5% algebraically (1 in 8) need a transition; 2.0m is usually sufficient, as a chord at half the algebraic sum of the two adjoining grades. These defaults are read from the 1993 edition PDF you supplied — worth checking your council doesn't reference a later edition (e.g. 2004) with different figures. Cl 2.5.3(c) also points to the actual geometric Ground Clearance Template (Appendix D) for a more rigorous scrape check than this simple length rule — see the vehicle scrape check below.</label>
+          </div>
+        </div>
+        <div class="section">
+          <h2><span class="section-num">5</span>Vehicle scrape check (ground clearance)</h2>
+          <div class="field">
+            <label class="checkrow"><input type="checkbox" id="dw-vc-enable"> Check a design vehicle's underside against this profile</label>
+          </div>
+          <div id="dw-vc-body" style="display:none;">
+            <div class="field">
+              <label>Design vehicle</label>
+              <select id="dw-vc-model">
+                <option value="b99">B99</option>
+                <option value="b85">B85</option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="checkrow"><input type="checkbox" id="dw-vc-flip"> Vehicle reversing (rear leads) instead of driving in forwards</label>
+            </div>
+            <div class="field">
+              <label>Drag to sweep the vehicle along the driveway — <span id="dw-vc-lead-label">rear</span> wheel at chainage <span id="dw-vc-chainage-label" class="mono">—</span></label>
+              <input type="range" id="dw-vc-slider" step="0.02" style="width:100%;">
+            </div>
+            <button class="btn small" id="dw-vc-jump-worst" type="button">Jump to worst point</button>
+            <div id="dw-vc-readout" class="mono" style="margin-top:8px;"></div>
+            <label style="margin-top:6px;">Rests the vehicle's two wheels on the design profile at the current slider position and checks whether its underside would scrape anywhere between the front and rear extremities — the same physical method as AS 2890.1's Appendix D template, just applied automatically. Both B99 and B85 use your supplied 2004 reference-sheet dimensions rather than Appendix D's own published B99 figures (Appendix D is B99-only in any case, so B85 never had an official alternative to prefer). Tick "reversing" to check the vehicle backing down the driveway instead of driving in — the front and rear overhangs (and the underside's ramp shape, which only exists at the physical rear) are different, so this changes the computed clearance, not just which end is drawn leading. The compliance summary below always reports the worst point found anywhere along the driveway, for whichever direction is currently selected.</label>
+          </div>
+        </div>
+        <div class="section">
+          <h2><span class="section-num">6</span>Approximate cut/fill volume</h2>
+          <div class="field">
+            <label>Corridor width (m)</label>
+            <input type="number" id="dw-cutfill-width" step="0.1" min="0" placeholder="e.g. 3.0">
+          </div>
+          <div id="dw-cutfill-readout" class="mono" style="margin-top:8px;"></div>
+          <label style="margin-top:6px;">Indicative only — integrates the cut/fill depth found along this single alignment line across a constant corridor width. This is not a true surface-to-surface volume: it takes no account of crossfall, batters, or any shaping a real earthworks design would have.</label>
+        </div>
+        <div class="section">
+          <h2>Compliance summary</h2>
+          <div id="dw-compliance-body"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="crossfall-panel">
+      <div class="section">
+        <h2>Crossfall between two driveway designs</h2>
+        <div class="field">
+          <label>Alignment A</label>
+          <select id="xf-align-a"></select>
+        </div>
+        <div class="field">
+          <label>Alignment B</label>
+          <select id="xf-align-b"></select>
+        </div>
+        <div class="field">
+          <label>Crossfall comparison method</label>
+          <select id="xf-projection-mode">
+            <option value="chainage">Matching chainage value</option>
+            <option value="perpendicular">Perpendicular projection</option>
+          </select>
+        </div>
+        <div class="field">
+          <label style="line-height:1.6;">Each alignment keeps its own independent driveway design — switch the "Existing terrain"/"Driveway" alignment selector to A or B to edit that side's kerb, layback and design points; this view just compares the two.</label>
+        </div>
+      </div>
+      <div id="xf-no-profile" class="empty-note" style="display:none;">Pick two different alignments with a design profile (or at least existing terrain) to compare.</div>
+      <div id="xf-body" style="display:none;">
+        <div class="section">
+          <h2>Assumption</h2>
+          <label id="xf-assumption-text" style="line-height:1.6; color:var(--text-dim); font-size:12.5px;">Crossfall is read at MATCHING CHAINAGE VALUE along each alignment (chainage 10.00 on A vs chainage 10.00 on B) &mdash; not a true perpendicular projection between the two lines. Only meaningful when both alignments start at a comparable point and run roughly parallel over a similar length.</label>
+        </div>
+        <div class="section">
+          <h2>Summary</h2>
+          <div id="xf-summary-body" class="mono" style="font-size:12.5px; line-height:1.7;"></div>
+        </div>
+        <div class="section">
+          <h2>Chainage readout</h2>
+          <label style="line-height:1.6; color:var(--text-dim); font-size:12.5px;">Drag the orange marker on the chart, or type a chainage directly, to read the exact crossfall at any one point.</label>
+          <div class="field" style="margin-top:6px;">
+            <label>Chainage (m)</label>
+            <input type="number" id="xf-marker-chainage" step="0.1" min="0">
+          </div>
+          <div id="xf-marker-readout" class="mono" style="font-size:12.5px; line-height:1.7; margin-top:6px;"></div>
+        </div>
+        <div class="section" id="section-export-crossfall">
+          <h2>Export crossfall (DXF)</h2>
+          <div class="export-mode-row">
+            <button class="btn" id="btn-export-crossfall-existing">Existing</button>
+            <button class="btn" id="btn-export-crossfall-proposed">Proposed</button>
+            <button class="btn" id="btn-export-crossfall-both">Both</button>
+          </div>
+          <div class="field" style="margin-top:8px;">
+            <label>DXF mirroring this view's three panels (Alignment A / Alignment B / crossfall-vs-chainage), each true to scale, plus a Chainage/RL-A/RL-B/Crossfall/Cross-slope table below them. <b>Existing</b> plots existing-ground only; <b>Proposed</b> plots each alignment's driveway design only (where one's enabled); <b>Both</b> plots them together. Uses whichever comparison method is currently selected above.</label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="legend" style="display:none;">
+      <div class="title">Elevation</div>
+      <div class="bar" id="legend-bar"></div>
+      <div class="labels mono"><span id="legend-min">&mdash;</span><span id="legend-max">&mdash;</span></div>
+    </div>
+
+    <div id="point-inspector" style="display:none;">
+      <div class="title">Point <span class="close-btn" id="point-inspector-close">&times;</span></div>
+      <div class="mono" id="point-inspector-body">&mdash;</div>
+    </div>
+
+    <div id="empty-state">
+      <svg width="52" height="52" viewBox="0 0 52 52" fill="none">
+        <path d="M4 40L18 20L28 32L36 14L48 40" stroke="#5B6870" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="18" cy="20" r="2" fill="#5B6870"/>
+        <circle cx="28" cy="32" r="2" fill="#5B6870"/>
+        <circle cx="36" cy="14" r="2" fill="#5B6870"/>
+      </svg>
+      <h2>No surface yet</h2>
+      <p>Upload a DXF to build the triangulated surface — an alignment on a layer named like "alignment" will be picked up automatically to read the existing terrain through it.</p>
+      <button class="btn primary" id="btn-sample">Load sample terrain</button>
+    </div>
+
+    <div id="triangulating-overlay">
+      <div class="spinner"></div>
+      <p>Triangulating <span id="triangulating-count">0</span> points&hellip;</p>
+      <button class="btn small" id="btn-cancel-triangulation">Cancel</button>
+    </div>
+  </div>
+
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
