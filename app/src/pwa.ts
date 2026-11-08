@@ -1,44 +1,36 @@
-// PWA platform integration (PLAN.md Stage 4) — service worker
-// registration and the .gradeline file-association launch consumer.
-// Self-wires at the bottom, same pattern jobs.ts uses, imported once
-// from main.ts for its side effects.
+// Platform integration: the desktop app's .gradeline double-click launch,
+// and clean-up after the old installable website. Self-wires at the
+// bottom, imported once from main.ts for its side effects.
 //
-// Everything here is feature/protocol-detected and wrapped defensively:
-// this same bundled index.html is still opened directly as a local
-// file:// document (the existing offline distribution, tinviewer.html)
-// where none of this applies — service workers can't register on
-// file://, and window.launchQueue only exists for an installed PWA. Both
-// must no-op silently there, never throw or log a console error.
+// 2026-11-08 (owner's decision): the Windows desktop app comes only from
+// the Tauri installer; the GitHub Pages site stays as a plain website. Its
+// web app manifest is gone (so browsers no longer offer "Install"), and
+// the service worker that made it installable/offline is retired. Anyone
+// who installed the old site as an app still has that worker and its
+// cache, so on the website this unregisters every worker for this origin
+// and deletes GradeLine's caches. public/sw.js is now a self-removing
+// worker too, for installs that never open the page again. Everything is
+// guarded so file:// (the standalone HTML) and the desktop app no-op.
 import { loadProjectBytes, setActiveHandle } from './jobs.ts';
 
-function registerServiceWorker(){
-  if (!('serviceWorker' in navigator)) return;
+function retireOldServiceWorker(){
   if (location.protocol !== 'http:' && location.protocol !== 'https:') return;
-  // The Tauri desktop build (PLAN.md Stage 5) serves these same files from
-  // http://tauri.localhost — a service worker there would only cache an
-  // app that's already local, and could keep serving the old version after
-  // an installer update.
   if ('__TAURI_INTERNALS__' in window) return;
   try {
-    navigator.serviceWorker.register('./sw.js').catch(function(){ /* offline first load, or unsupported — fine either way */ });
-  } catch (err: unknown){ /* never let PWA plumbing break the app itself */ }
+    if ('serviceWorker' in navigator){
+      navigator.serviceWorker.getRegistrations().then(function(regs){
+        regs.forEach(function(r){ r.unregister(); });
+      }).catch(function(){ /* nothing to clean up */ });
+    }
+    if ('caches' in window){
+      caches.keys().then(function(keys){
+        keys.filter(function(k){ return /^gradeline-/.test(k); }).forEach(function(k){ caches.delete(k); });
+      }).catch(function(){ /* nothing to clean up */ });
+    }
+  } catch (err: unknown){ /* never let clean-up break the app itself */ }
 }
 
-function consumeLaunchFiles(){
-  if (!('launchQueue' in window) || !window.launchQueue) return;
-  try {
-    window.launchQueue.setConsumer(async function(launchParams){
-      if (!launchParams.files || !launchParams.files.length) return;
-      var handle = launchParams.files[0];
-      var file = await handle.getFile();
-      var bytes = new Uint8Array(await file.arrayBuffer());
-      setActiveHandle(handle); // a "Save" after this launch overwrites the same file
-      await loadProjectBytes(bytes, handle.name);
-    });
-  } catch (err: unknown){ /* never let PWA plumbing break the app itself */ }
-}
-
-// Desktop-app equivalent of consumeLaunchFiles: Windows passes a
+// Desktop app: Windows passes a
 // double-clicked .gradeline file's path on the command line, and the Rust
 // side (desktop/src-tauri/src/main.rs) hands over its name and bytes.
 // There's no FileSystemFileHandle for a command-line path, so a later
@@ -54,6 +46,5 @@ function consumeTauriLaunchFile(){
   }).catch(function(){ /* never let launch plumbing break the app itself */ });
 }
 
-registerServiceWorker();
-consumeLaunchFiles();
+retireOldServiceWorker();
 consumeTauriLaunchFile();

@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@kninnug/constrainautor": "4.1.0",
     "delaunator": "5.1.0",
     "three": "^0.186.0"
   },

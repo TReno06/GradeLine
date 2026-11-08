@@ -1,8 +1,8 @@
 // Printing / direct PDF export orchestration — PLAN.md Stage 2
 // checkpoint 3 port, extracted verbatim from main.js.
 import { $, escapeHtml } from './dom.ts';
-import { state, currentAlignmentLabel } from './state.ts';
-import { three } from './view3d.ts';
+import { state, currentAlignmentLabel, activeAlignmentFileName } from './state.ts';
+import { three, requestRender } from './view3d.ts';
 import { profileData } from './longsection.ts';
 import { drawProfile } from './rendering.ts';
 import { pdfCompressionAvailable, decodePngForPdf, buildSectionPdfBytes, saveFile } from './export.ts';
@@ -93,6 +93,7 @@ export function printCurrentScreen(){
   if (is3DVisible()){
     three.renderer.render(three.scene, three.camera);
     images.push({dataUrl: three.renderer.domElement.toDataURL('image/png'), caption: view==='split' ? '3D surface' : null});
+    requestRender(); // redraw with the orientation cube, which the capture above leaves out
   }
   if (isProfileVisible()){
     drawProfile();
@@ -124,7 +125,14 @@ export function printCurrentScreen(){
   })).then(function(decoded){
     return buildSectionPdfBytes(decoded, subtitle);
   }).then(function(pdfBytes){
-    saveFile('gradeline-' + view + '.pdf', pdfBytes);
+    // Long-section views save as "Alignment N Existing" (the existing-
+    // terrain view, or a driveway/split view with no design showing) or
+    // "Alignment N Both" (a driveway design is drawn over the ground).
+    // The 3D-only view and crossfall (two alignments) keep their names.
+    var designShown = (view === 'driveway' || view === 'split') && state.driveway.enabled && state.driveway.pvis.length >= 2;
+    var pdfName = (view === 'profile' || view === 'driveway' || view === 'split')
+      ? activeAlignmentFileName(designShown ? 'both' : 'existing') : 'gradeline-' + view;
+    saveFile(pdfName + '.pdf', pdfBytes);
   }).catch(function(err){
     console.error('Direct PDF export failed, falling back to the print dialog:', err);
     openPrintWindow(printBodyHtml(subtitle, images), 'GradeLine — ' + subtitle);

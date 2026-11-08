@@ -42,7 +42,8 @@ export function gatherDomSettings(): ProjectDomSettings {
     filters: {
       ignoreZero: $<HTMLInputElement>('chk-ignore-zero').checked,
       ignoreFar: $<HTMLInputElement>('chk-ignore-far').checked,
-      farLimit: parseFloat($<HTMLInputElement>('far-limit').value) || 0
+      farLimit: parseFloat($<HTMLInputElement>('far-limit').value) || 0,
+      useBreaklines: $<HTMLInputElement>('chk-breaklines').checked
     },
     datum: {
       enabled: $<HTMLInputElement>('chk-datum').checked,
@@ -54,6 +55,7 @@ export function gatherDomSettings(): ProjectDomSettings {
       wireframe: $<HTMLInputElement>('chk-wireframe').checked,
       points: $<HTMLInputElement>('chk-points').checked,
       alignment: $<HTMLInputElement>('chk-alignment').checked,
+      breaklines: $<HTMLInputElement>('chk-show-breaklines').checked,
       profileTrueScale: $<HTMLInputElement>('chk-profile-true-scale').checked,
       sampleInterval: parseFloat($<HTMLInputElement>('sample-interval').value) || 2,
       gradeBreakTolerance: parseFloat($<HTMLInputElement>('grade-break-tolerance').value) || 0.05,
@@ -74,11 +76,14 @@ export function applyDomSettings(settings: ProjectDomSettings){
   $<HTMLInputElement>('chk-ignore-zero').checked = settings.filters.ignoreZero;
   $<HTMLInputElement>('chk-ignore-far').checked = settings.filters.ignoreFar;
   $<HTMLInputElement>('far-limit').value = String(settings.filters.farLimit);
+  // Missing in files/settings saved before breaklines existed: default on.
+  $<HTMLInputElement>('chk-breaklines').checked = settings.filters.useBreaklines !== false;
   $<HTMLInputElement>('chk-datum').checked = settings.datum.enabled;
   $<HTMLInputElement>('datum-rl').value = String(settings.datum.rl);
   $<HTMLInputElement>('chk-wireframe').checked = settings.view.wireframe;
   $<HTMLInputElement>('chk-points').checked = settings.view.points;
   $<HTMLInputElement>('chk-alignment').checked = settings.view.alignment;
+  $<HTMLInputElement>('chk-show-breaklines').checked = settings.view.breaklines !== false;
   $<HTMLInputElement>('chk-profile-true-scale').checked = settings.view.profileTrueScale;
   $<HTMLInputElement>('sample-interval').value = String(settings.view.sampleInterval);
   $<HTMLInputElement>('grade-break-tolerance').value = String(settings.view.gradeBreakTolerance);
@@ -156,15 +161,15 @@ export async function saveProject(){
 // ------------------------------------------------------------
 // Open
 // ------------------------------------------------------------
-// Exported for pwa.ts's launchQueue consumer (Stage 4's .gradeline file
-// association), so a file-associated launch can make itself the active
-// "Save" target too, same as opening the file manually would.
+// Exported for pwa.ts's desktop-app launch (a double-clicked .gradeline),
+// so a file-associated launch sets the active "Save" target the same way
+// opening the file manually would.
 export function setActiveHandle(handle: FileSystemFileHandleLike | null){
   activeHandle = handle;
 }
 
-// Exported for pwa.ts's launchQueue consumer (Stage 4's .gradeline file
-// association) — a file-associated launch goes through the exact same
+// Exported for pwa.ts's desktop-app launch — a double-clicked
+// .gradeline goes through the exact same
 // load/rebuild/switchView pipeline as a manual Open, not a parallel copy.
 export async function loadProjectBytes(bytes: Uint8Array, fileName: string){
   // Wrapped end-to-end, not just around JSON.parse: gzipDecompress() (a
@@ -182,7 +187,8 @@ export async function loadProjectBytes(bytes: Uint8Array, fileName: string){
     // Same derived-state rebuild a fresh DXF load performs (see main.ts):
     // the layer breakdown is recomputed from the restored raw points, not
     // itself stored in the project file.
-    state.pointLayers = computeLayerBreakdown(state.rawPoints || []);
+    state.pointLayers = computeLayerBreakdown(state.rawPoints || [], state.rawBreaklines,
+      (state.rawAlignments || []).flatMap(function(a){ return a.vertices; }));
     renderLayerFilterUI();
     renderAlignmentSelector();
 

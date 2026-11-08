@@ -6,7 +6,9 @@
 // file's own import, and inlines the whole worker as a data: URI in the
 // single-file build, so the single self-contained HTML file guarantee
 // (CLAUDE.md's Design decisions) still holds.
-import Delaunator from 'delaunator';
+// (2026-11-08) Runs geometry/constrain.ts's shared routine, so breakline
+// edges are forced in here exactly as on the main-thread fallback.
+import { triangulateCoords } from './geometry/constrain.ts';
 
 // Typed as the DedicatedWorkerGlobalScope this file actually runs as
 // (Vite bundles it as a Worker via the `?worker&inline` import in
@@ -18,9 +20,9 @@ var ctx = self as unknown as { onmessage: (e: MessageEvent) => void; postMessage
 ctx.onmessage = function(e: MessageEvent){
   var id = e.data.id;
   try {
-    var d = new Delaunator(e.data.coords);
-    var tris = d.triangles;
-    ctx.postMessage({id: id, triangles: tris}, [tris.buffer]);
+    var r = triangulateCoords(e.data.coords, e.data.edges || null);
+    var tris = r.triangles;
+    ctx.postMessage({id: id, triangles: tris, failed: r.failed}, [tris.buffer]);
   } catch (err) {
     ctx.postMessage({id: id, error: String(err instanceof Error ? err.message : err)});
   }

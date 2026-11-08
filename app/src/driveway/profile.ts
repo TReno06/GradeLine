@@ -56,14 +56,19 @@ export function computeDrivewayProfileFrom(pvis: Pvi[] | null): DrivewayProfile 
 // the first *sloped, checked* leg only.
 export function legGradeChecksFrom(legs: DrivewayLeg[], rules: Partial<DrivewayRules> | undefined): LegGradeCheck[] {
   rules = rules || {};
-  var maxGrade = isFinite(rules.maxGrade as number) ? rules.maxGrade as number : 20;
+  var maxGrade = isFinite(rules.maxGrade as number) ? rules.maxGrade as number : 25;
   var applyBoundaryRule = !!rules.applyBoundaryRule;
   var maxGradeBoundary = isFinite(rules.maxGradeBoundary as number) ? rules.maxGradeBoundary as number : 5;
-  var slopedLegsSeen = 0;
-  return legs.map(function(leg): LegGradeCheck {
+  var boundaryIndex = -1;
+  if (applyBoundaryRule){
+    for (var bi=0; bi<legs.length; bi++){
+      var bLeg = legs[rules.boundaryAtEnd ? legs.length-1-bi : bi];
+      if (!bLeg.isVertical && !bLeg.isTemplate){ boundaryIndex = rules.boundaryAtEnd ? legs.length-1-bi : bi; break; }
+    }
+  }
+  return legs.map(function(leg, legIndex): LegGradeCheck {
     if (leg.isVertical || leg.isTemplate) return {checked:false, isBoundary:false, limit:null, exceeds:false};
-    var isBoundary = applyBoundaryRule && slopedLegsSeen===0;
-    slopedLegsSeen++;
+    var isBoundary = legIndex === boundaryIndex;
     var limit = isBoundary ? maxGradeBoundary : maxGrade;
     return {checked:true, isBoundary:isBoundary, limit:limit, exceeds: Math.abs(leg.grade) > limit + 1e-9};
   });
@@ -79,6 +84,7 @@ export function legGradeChecksFrom(legs: DrivewayLeg[], rules: Partial<DrivewayR
 export function computeDrivewayComplianceFrom(profile: DrivewayProfile | null, rules: Partial<DrivewayRules> | undefined): ComplianceRow[] {
   rules = rules || {};
   var transitionThreshold = isFinite(rules.transitionThreshold as number) ? rules.transitionThreshold as number : 12.5;
+  var transitionThresholdSag = isFinite(rules.transitionThresholdSag as number) ? rules.transitionThresholdSag as number : 15;
   var minTransitionLength = isFinite(rules.minTransitionLength as number) ? rules.minTransitionLength as number : 2;
   var rows: ComplianceRow[] = [];
   if (!profile) return rows;
@@ -114,28 +120,84 @@ export function computeDrivewayComplianceFrom(profile: DrivewayProfile | null, r
   for (var k=0;k<profile.legs.length-1;k++){
     var legA = profile.legs[k], legB = profile.legs[k+1];
     if (legA.isVertical || legB.isVertical || legA.isTemplate || legB.isTemplate) continue;
-    var change = Math.abs(legB.grade - legA.grade);
+    // Algebraic change in the direction of travel: falling = a summit
+    // (crest), rising = a sag (dip). Reversing the direction flips both
+    // grades and their order, so the kind of change doesn't depend on it.
+    var signed = legB.grade - legA.grade;
+    var change = Math.abs(signed);
+    var isSag = signed > 0;
+    var threshold = isSag ? transitionThresholdSag : transitionThreshold;
+    var kind = isSag ? 'sag' : 'summit';
     var pviChainage = legA.to.chainage;
-    if (change > transitionThreshold + 1e-9){
+    if (change > threshold + 1e-9){
       var shortLeg = Math.min(legA.run, legB.run);
       if (shortLeg < minTransitionLength - 1e-9){
-        rows.push({cls:'diag-warn', text: 'Grade change of ' + change.toFixed(2) + '% at ch ' +
-          pviChainage.toFixed(1) + ' exceeds the ' + transitionThreshold.toFixed(1) +
-          '% transition threshold, and the shortest adjoining leg (' + shortLeg.toFixed(2) +
+        rows.push({cls:'diag-warn', text: 'Grade change of ' + change.toFixed(2) + '% (' + kind + ') at ch ' +
+          pviChainage.toFixed(1) + ' exceeds the ' + threshold.toFixed(1) +
+          '% ' + kind + ' transition threshold, and the shortest adjoining leg (' + shortLeg.toFixed(2) +
           'm) is under the ' + minTransitionLength.toFixed(1) +
           'm minimum - consider inserting a transition grade around ' +
           ((legA.grade+legB.grade)/2 >= 0 ? '+' : '') + ((legA.grade+legB.grade)/2).toFixed(1) + '%.'});
       } else {
-        rows.push({cls:'diag-ok', text: 'Grade change of ' + change.toFixed(2) + '% at ch ' +
-          pviChainage.toFixed(1) + ' exceeds the transition threshold but the adjoining leg length (' +
+        rows.push({cls:'diag-ok', text: 'Grade change of ' + change.toFixed(2) + '% (' + kind + ') at ch ' +
+          pviChainage.toFixed(1) + ' exceeds the ' + kind + ' transition threshold but the adjoining leg length (' +
           shortLeg.toFixed(2) + 'm) meets the configured minimum.'});
       }
     }
   }
+  var fp = footpathCheckFrom(profile, rules);
+  if (fp) rows.push(fp);
   if (!rows.length){
     rows.push({cls:'diag-ok', text: 'Add at least two design points to check grades.'});
   }
   return rows;
+}
+
+// Across the footpath (AS/NZS 2890.1:2004 Cl 3.3(d), applied to domestic
+// driveways by Cl 2.6.2): "the driveway grade shall be 1 in 40 (2.5%) or
+// less across the footpath over a lateral distance of at least 1.0 m".
+// GradeLine doesn't know where the footpath is, so it looks across the
+// crossing: from the kerb (after the kerb/layback template) along the
+// run of checked legs no steeper than the boundary limit — i.e. up to the
+// point where the driveway starts climbing into the property — and needs
+// one continuous stretch of legs at or under the footpath grade adding up
+// to at least the minimum length. On a reversed alignment the road end is
+// the far end, so it searches from there. Returns null when the rule is
+// off or there's no checked leg to look at.
+export function footpathCheckFrom(profile: DrivewayProfile | null, rules: Partial<DrivewayRules> | undefined): ComplianceRow | null {
+  rules = rules || {};
+  if (!profile || !rules.applyFootpathRule) return null;
+  var maxFp = isFinite(rules.footpathMaxGrade as number) ? rules.footpathMaxGrade as number : 2.5;
+  var minLen = isFinite(rules.footpathMinLength as number) ? rules.footpathMinLength as number : 1.0;
+  var crossingLimit = isFinite(rules.maxGradeBoundary as number) ? rules.maxGradeBoundary as number : 5;
+  var legs = profile.legs.slice();
+  if (rules.boundaryAtEnd) legs.reverse();
+  var i = 0;
+  while (i < legs.length && (legs[i].isVertical || legs[i].isTemplate)) i++;
+  if (i >= legs.length) return null;
+  var start = i, best = 0, bestFrom = -1, bestTo = -1, runLen = 0, runFrom = -1;
+  for (; i < legs.length; i++){
+    var leg = legs[i];
+    if (leg.isVertical || leg.isTemplate || Math.abs(leg.grade) > crossingLimit + 1e-9) break;
+    if (Math.abs(leg.grade) <= maxFp + 1e-9){
+      if (runFrom < 0){ runFrom = i; runLen = 0; }
+      runLen += leg.run;
+      if (runLen > best){ best = runLen; bestFrom = runFrom; bestTo = i; }
+    } else runFrom = -1;
+  }
+  var end = i - 1;
+  if (end < start) return {cls:'diag-warn', text: 'Across the footpath: the first leg after the kerb is steeper than ' + crossingLimit.toFixed(1) +
+    '%, so there is no ' + minLen.toFixed(1) + 'm stretch at ' + maxFp.toFixed(1) + '% or flatter (AS/NZS 2890.1:2004 Cl 3.3(d)).'};
+  var span = function(a: number, b: number){
+    var c0 = Math.min(legs[a].from.chainage, legs[b].to.chainage), c1 = Math.max(legs[a].from.chainage, legs[b].to.chainage);
+    return 'ch ' + c0.toFixed(2) + '-' + c1.toFixed(2);
+  };
+  if (best + 1e-9 >= minLen){
+    return {cls:'diag-ok', text: 'Across the footpath: ' + best.toFixed(2) + 'm at ' + maxFp.toFixed(1) + '% or flatter (' + span(bestFrom, bestTo) +
+      '), meeting the ' + minLen.toFixed(1) + 'm minimum.'};
+  }
+  return {cls:'diag-warn', text: 'Across the footpath (' + span(start, end) + '): ' + (best > 0 ? 'only ' + best.toFixed(2) + 'm' : 'no stretch') +
+    ' at ' + maxFp.toFixed(1) + '% or flatter — AS/NZS 2890.1:2004 Cl 3.3(d) needs at least ' + minLen.toFixed(1) + 'm. Add a design point to flatten the grade where the footpath is.'};
 }
 
 // Same math as the app's applyKerbPoints(): the gutter invert and the

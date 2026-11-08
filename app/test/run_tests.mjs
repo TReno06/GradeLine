@@ -4,16 +4,19 @@
 // file imports the REAL modules directly — no mirror, no drift possible.
 // Run with: node test/run_tests.mjs (from the app/ directory)
 
-import { buildTriIndex, elevationAt, triangleIndexAt, triangulate } from '../src/geometry/tin.ts';
-import { computeExactBreakChainages, computeIntervalMarksFrom, pointAtChainage, chainageOfClosestPoint, interpolatedSampleAt } from '../src/geometry/chainage.ts';
-import { computeDrivewayComplianceFrom, computeDrivewayProfileFrom, computeKerbPvisFrom, computeLaybackPvisFrom, legGradeChecksFrom } from '../src/driveway/profile.ts';
-import { VEHICLE_TEMPLATES, findWorstVehicleSweepFrom, sweepVehicleTemplateFrom, templateUndersideLocal, vehicleSweepRangeFrom } from '../src/driveway/vehicle.ts';
+import { buildTriIndex, elevationAt, triangleIndexAt, triangulate, triangulateConstrained } from '../src/geometry/tin.ts';
+import { arcBreakline, prepareConstrainedInput } from '../src/geometry/breaklines.ts';
+import { computeExactBreakChainages, computeIntervalMarksFrom, pointAtChainage, chainageOfClosestPoint, chainageSquareAcross, tangentAtChainage, interpolatedSampleAt } from '../src/geometry/chainage.ts';
+import { computeDrivewayComplianceFrom, footpathCheckFrom, computeDrivewayProfileFrom, computeKerbPvisFrom, computeLaybackPvisFrom, legGradeChecksFrom } from '../src/driveway/profile.ts';
+import { VEHICLE_TEMPLATES, effectiveVehicleTemplate, findWorstVehicleSweepFrom, sweepVehicleTemplateFrom, templateUndersideLocal, vehicleSweepRangeFrom } from '../src/driveway/vehicle.ts';
 import { computeSectionTableFrom, declutterLabelsFrom, layoutTableColumnsFrom, computeCrossfallTableFrom } from '../src/driveway/sectionTable.ts';
 import { computeCutFillVolumeFrom } from '../src/driveway/cutfill.ts';
 import { computeCrossfallSeriesFrom, computeCrossfallSeriesPerpendicular } from '../src/crossfall.ts';
-import { computeLayerBreakdown } from '../src/dxf.ts';
-import { state } from '../src/state.ts';
+import { computeLayerBreakdown, describeOffsite, expandBulgedPolyline, findOffsiteLayers, parseDXFFile } from '../src/dxf.ts';
+import { mirrorDrivewayState } from '../src/driveway/reverse.ts';
+import { state, defaultDrivewayState } from '../src/state.ts';
 import { serializeProject, applyProjectData, gzipCompress, gzipDecompress, looksGzipped } from '../src/project.ts';
+import { buildSampleSite, sampleBend } from '../src/sample.ts';
 import fs from 'node:fs';
 
 let pass = 0, fail = 0;
@@ -376,7 +379,7 @@ function gradePctLabel(b0, b1){
   const noBoundary = legGradeChecksFrom(profile.legs, {maxGrade:20, applyBoundaryRule:false});
   check('boundary rule off: no leg is a boundary leg', noBoundary.every(c => !c.isBoundary));
   const defaults = legGradeChecksFrom(profile.legs, undefined);
-  check('no rules object: falls back to the 20% default max', defaults[3].limit === 20);
+  check('no rules object: falls back to the 25% default max (AS/NZS 2890.1:2004 Cl 2.6.2)', defaults[3].limit === 25);
 }
 
 // ======= from run_tests8.js =======
@@ -642,7 +645,7 @@ function driveGroundRLAt(dwProfile, ch){
   check('B85 wheelbase matches supplied reference (2.800m)', b85.wheelbase === 2.800);
   check('B85 rear overhang = overall length - wheelbase - front overhang (4.910-2.800-0.920=1.190)',
     approx(b85.rearOverhang, 1.190));
-  check('B85 is flagged NOT official (approximation, no AS 2890.1 template)', b85.official === false);
+  check('B85 is official: AS/NZS 2890.1:2004 Figure C1(b), for domestic driveways', b85.official === true);
 }
 
 // --- templateUndersideLocal: sits at the vehicle's real min ground
@@ -651,17 +654,30 @@ function driveGroundRLAt(dwProfile, ch){
 // rises further above that baseline over the rear overhang ---
 {
   const b99 = VEHICLE_TEMPLATES.b99;
-  check('front overhang sits at the vehicle\'s min ground clearance (u=-0.5)',
+  check('front overhang stays at the clearance until the 10deg approach line passes it (u=-0.5)',
     templateUndersideLocal(b99, -0.5) === b99.clearance);
+  check('front extremity follows the 10deg approach line from the tyre contact (0.950*tan10 ~= 167mm)',
+    approx(templateUndersideLocal(b99, -0.95), 0.95*Math.tan(10*Math.PI/180), 1e-9));
+  check('approach angle 0 reproduces the old flat front overhang exactly',
+    templateUndersideLocal(Object.assign({}, b99, {frontRampAngleDeg: 0}), -0.5) === b99.clearance);
   check('front wheel sits at min ground clearance (u=0)',
     templateUndersideLocal(b99, 0) === b99.clearance);
   check('rear wheel sits at min ground clearance (u=wheelbase)',
     templateUndersideLocal(b99, b99.wheelbase) === b99.clearance);
-  check('B99\'s 2004 sheet has no rear flat lead-in, so the ramp starts immediately past the rear wheel',
-    templateUndersideLocal(b99, b99.wheelbase+0.05) > b99.clearance);
+  check('just behind the rear wheel the underside is still at the clearance (Figure C1)',
+    templateUndersideLocal(b99, b99.wheelbase+0.5) === b99.clearance);
+  const kink = b99.clearance / Math.tan(10*Math.PI/180);
+  check('the 10deg departure line takes over ~0.68m behind the rear axle',
+    templateUndersideLocal(b99, b99.wheelbase + kink - 0.01) === b99.clearance && templateUndersideLocal(b99, b99.wheelbase + kink + 0.05) > b99.clearance);
   const heightAtRearExtremity = templateUndersideLocal(b99, b99.wheelbase + b99.rearOverhang);
-  check('rear extremity is the min clearance plus the ramp\'s own rise (1.200m * tan(8deg) ~= 0.1686m)',
-    approx(heightAtRearExtremity - b99.clearance, 1.200*Math.tan(8*Math.PI/180), 1e-4));
+  check('rear extremity sits on the 10deg departure line from the tyre contact (1.200*tan10 ~= 212mm)',
+    approx(heightAtRearExtremity, 1.200*Math.tan(10*Math.PI/180), 1e-9));
+  check('both templates are the 2004 Figure C1 shape: 120mm, 10deg approach and departure',
+    ['b99','b85'].every(k => VEHICLE_TEMPLATES[k].clearance === 0.120 && VEHICLE_TEMPLATES[k].frontRampAngleDeg === 10 && VEHICLE_TEMPLATES[k].rampAngleDeg === 10));
+  check('B99 lengths are Figure B1 (3050/950/1200), B85 Figure B2 (2800/920/1190)',
+    VEHICLE_TEMPLATES.b99.wheelbase === 3.05 && VEHICLE_TEMPLATES.b99.frontOverhang === 0.95 && VEHICLE_TEMPLATES.b99.rearOverhang === 1.2 &&
+    VEHICLE_TEMPLATES.b85.wheelbase === 2.8 && VEHICLE_TEMPLATES.b85.frontOverhang === 0.92 && VEHICLE_TEMPLATES.b85.rearOverhang === 1.19);
+  check('new designs default to the B85 (domestic) template', defaultDrivewayState().vehicleCheck.model === 'b85');
 }
 
 // --- sweepVehicleTemplateFrom: perfectly flat, level ground never scrapes ---
@@ -770,8 +786,9 @@ function driveGroundRLAt(dwProfile, ch){
   const rearTipHeight = templateUndersideLocal(b99, b99.wheelbase + b99.rearOverhang);
   check('default: the LOW-chainage extremity carries the rear\'s ramp height (rear faces left)',
     approx(lowHeight, rearTipHeight, 1e-6));
-  check('default: the HIGH-chainage extremity is flat at min clearance (front faces right, never ramps)',
-    approx(highHeight, b99.clearance, 1e-6));
+  const frontTipHeight = templateUndersideLocal(b99, -b99.frontOverhang);
+  check('default: the HIGH-chainage extremity carries the front\'s approach-angle height (front faces right)',
+    approx(highHeight, frontTipHeight, 1e-6));
   check('default: low-chainage extremity sits higher than high-chainage (the ramp only exists on the rear/low side)',
     lowHeight > highHeight);
 }
@@ -796,8 +813,9 @@ function driveGroundRLAt(dwProfile, ch){
   const rearTipHeight = templateUndersideLocal(b99, b99.wheelbase + b99.rearOverhang);
   check('flipped: the HIGH-chainage extremity now carries the rear\'s ramp height (rear faces right)',
     approx(highHeight, rearTipHeight, 1e-6));
-  check('flipped: the LOW-chainage extremity is now flat at min clearance (front faces left, never ramps)',
-    approx(lowHeight, b99.clearance, 1e-6));
+  const frontTipHeightF = templateUndersideLocal(b99, -b99.frontOverhang);
+  check('flipped: the LOW-chainage extremity now carries the front\'s approach-angle height (front faces left)',
+    approx(lowHeight, frontTipHeightF, 1e-6));
   check('flipped: high-chainage extremity sits higher than low-chainage (mirror image of the default)',
     highHeight > lowHeight);
 }
@@ -1256,24 +1274,412 @@ function convexHullSize(points){
   check('looksGzipped rejects plain JSON text bytes', !looksGzipped(new TextEncoder().encode(sample)));
 }
 
-// ======= Stage 4: PWA manifest sanity check =======
-// Cheap regression guard: a typo here silently breaks installability
-// (Chrome just declines to offer "Install", with no error anywhere
-// obvious) rather than throwing, so it's worth a direct check.
+// ======= 2026-11-08: the website is no longer installable =======
+// The desktop app comes only from the Tauri installer (owner's decision).
 {
-  const manifest = JSON.parse(fs.readFileSync(new URL('../public/manifest.json', import.meta.url)));
-  check('manifest.json has the required installability fields',
-    typeof manifest.name === 'string' && manifest.name.length > 0 &&
-    typeof manifest.start_url === 'string' &&
-    manifest.display === 'standalone' &&
-    Array.isArray(manifest.icons) && manifest.icons.length >= 2);
-  check('manifest.json declares a 512x512 icon (required for install prompts)',
-    manifest.icons.some(i => i.sizes === '512x512'));
-  check('manifest.json’s icon files all exist in public/',
-    manifest.icons.every(i => fs.existsSync(new URL('../public/' + i.src, import.meta.url))));
-  check('manifest.json declares the .gradeline file handler',
-    Array.isArray(manifest.file_handlers) &&
-    manifest.file_handlers.some(h => Object.values(h.accept || {}).some(exts => exts.includes('.gradeline'))));
+  const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  check('website: no web app manifest linked (browsers won\'t offer Install)', !/rel=["']manifest["']/.test(html));
+  check('website: manifest.json removed from public/', !fs.existsSync(new URL('../public/manifest.json', import.meta.url)));
+  const sw = fs.readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
+  check('website: sw.js is a self-removing worker (no fetch handler, unregisters, clears caches)',
+    !/addEventListener\(['"]fetch/.test(sw) && /registration\.unregister\(\)/.test(sw) && /caches\.delete/.test(sw));
+  const pwa = fs.readFileSync(new URL('../src/pwa.ts', import.meta.url), 'utf8');
+  check('website: the app no longer registers a service worker', !/serviceWorker\.register\(/.test(pwa) && /unregister\(\)/.test(pwa));
+}
+
+// ======= 2026-11-07: bulged/closed DXF polylines =======
+{
+  // Quarter-circle fillet: (0,0) -> (10,0) straight, then a 90deg CCW
+  // arc of radius 5 to (15,5), then straight up to (15,15).
+  const b = Math.tan((Math.PI/2)/4);
+  const out = expandBulgedPolyline([
+    {x:0,y:0,z:0,bulge:0}, {x:10,y:0,z:0,bulge:b}, {x:15,y:5,z:0,bulge:0}, {x:15,y:15,z:0,bulge:0}
+  ], false);
+  let len = 0, maxR = 0, minR = Infinity, arcPts = 0;
+  for (let i=1;i<out.length;i++) len += Math.hypot(out[i].x-out[i-1].x, out[i].y-out[i-1].y);
+  for (const p of out){
+    if (p.x > 10 + 1e-9 && p.x < 15 - 1e-9){ arcPts++; const r = Math.hypot(p.x-10, p.y-5); maxR = Math.max(maxR, r); minR = Math.min(minR, r); }
+  }
+  check('bulge: arc is tessellated into intermediate vertices', arcPts > 10);
+  check('bulge: every arc vertex sits on the radius-5 circle about (10,5)', approx(maxR, 5, 1e-9) && approx(minR, 5, 1e-9));
+  check('bulge: polyline length matches straight + true arc length (within 1mm)', approx(len, 10 + 5*Math.PI/2 + 10, 1e-3));
+  check('bulge: endpoints preserved', out[0].x===0 && out[0].y===0 && out[out.length-1].x===15 && out[out.length-1].y===15);
+  // Clockwise (negative) bulge bends the other way: centre (10,-5).
+  const cw = expandBulgedPolyline([{x:10,y:0,z:0,bulge:-b}, {x:15,y:-5,z:0,bulge:0}], false);
+  check('bulge: negative bulge arcs clockwise about the right-hand centre',
+    cw.slice(1,-1).every(p => approx(Math.hypot(p.x-10, p.y+5), 5, 1e-9)));
+  // Closed square gets its closing edge.
+  const sq = expandBulgedPolyline([{x:0,y:0,z:0,bulge:0},{x:1,y:0,z:0,bulge:0},{x:1,y:1,z:0,bulge:0},{x:0,y:1,z:0,bulge:0}], true);
+  check('closed polyline: closing segment back to the first vertex is added', sq.length === 5 && sq[4].x===0 && sq[4].y===0);
+  const open = expandBulgedPolyline([{x:0,y:0,z:0,bulge:0},{x:1,y:0,z:0,bulge:0}], false);
+  check('no bulge, open: vertices unchanged', open.length === 2);
+}
+{
+  // End-to-end through the DXF reader: an LWPOLYLINE with a bulge on an
+  // ALIGNMENT layer comes back with the arc expanded.
+  const b = Math.tan((Math.PI/2)/4);
+  const dxf = ['0','SECTION','2','ENTITIES',
+    '0','LWPOLYLINE','8','ALIGNMENT','90','3','70','0',
+    '10','0','20','0',
+    '10','10','20','0','42',String(b),
+    '10','15','20','5',
+    '0','ENDSEC','0','E'+'OF'].join('\n');
+  const geo = parseDXFFile(dxf);
+  const pl = geo.polylines[0];
+  let len = 0;
+  for (let i=1;i<pl.vertices.length;i++) len += Math.hypot(pl.vertices[i].x-pl.vertices[i-1].x, pl.vertices[i].y-pl.vertices[i-1].y);
+  check('DXF LWPOLYLINE bulge (code 42) is read and the arc expanded', pl.vertices.length > 10 && approx(len, 10 + 5*Math.PI/2, 1e-3));
+  check('DXF LWPOLYLINE with a bulge is still flat (an alignment candidate)', pl.flat === true);
+  // Old-style POLYLINE/VERTEX with a bulge on the VERTEX, closed flag set.
+  const dxf2 = ['0','SECTION','2','ENTITIES',
+    '0','POLYLINE','8','ALIGNMENT','66','1','70','1',
+    '0','VERTEX','8','ALIGNMENT','10','0','20','0','30','0',
+    '0','VERTEX','8','ALIGNMENT','10','10','20','0','30','0','42',String(b),
+    '0','VERTEX','8','ALIGNMENT','10','15','20','5','30','0',
+    '0','SEQEND',
+    '0','ENDSEC','0','E'+'OF'].join('\n');
+  const pl2 = parseDXFFile(dxf2).polylines[0];
+  const last = pl2.vertices[pl2.vertices.length-1];
+  check('DXF POLYLINE: VERTEX bulge expanded and closed flag adds the closing segment',
+    pl2.vertices.length > 10 && last.x === 0 && last.y === 0);
+}
+
+// ======= 2026-11-07: reversing an alignment mirrors its driveway design =======
+{
+  const dw = defaultDrivewayState();
+  dw.enabled = true;
+  dw.pvis = [
+    {chainage: 2, rl: 10.0, template:'kerb'}, {chainage: 2, rl: 10.15, template:'kerb'},
+    {chainage: 5, rl: 10.4}, {chainage: 12.5, rl: 11.2}
+  ];
+  dw.frontier = {chainage: 2, rl: 10.15};
+  dw.kerbInvert = {chainage: 2, rl: 10.0};
+  dw.vehicleCheck = {enabled: true, model: 'b85', sweepChainage: 4.2, flipped: false, dims: {b85: {clearance: 0.1}}};
+  dw.cutFillCorridorWidth = 3;
+  const total = 20;
+  const m = mirrorDrivewayState(dw, total);
+  check('mirror: PVIs re-measured from the other end, ascending',
+    JSON.stringify(m.pvis.map(p=>p.chainage)) === JSON.stringify([7.5, 15, 18, 18]));
+  check('mirror: RLs stay with their physical points', m.pvis[0].rl === 11.2 && m.pvis[1].rl === 10.4);
+  check('mirror: vertical face keeps both points, order swapped for the new direction',
+    m.pvis[2].rl === 10.15 && m.pvis[3].rl === 10.0 && m.pvis[2].template === 'kerb');
+  check('mirror: frontier/kerb invert mirrored', m.frontier.chainage === 18 && m.kerbInvert.chainage === 18);
+  check('mirror: vehicle orientation flips and position is re-found', m.vehicleCheck.flipped === true && m.vehicleCheck.sweepChainage === null);
+  check('mirror: vehicle dims, corridor width, enabled carried over', m.vehicleCheck.dims.b85.clearance === 0.1 && m.cutFillCorridorWidth === 3 && m.enabled);
+  const back = mirrorDrivewayState(m, total);
+  check('mirror twice: exact round trip', JSON.stringify(back.pvis) === JSON.stringify(dw.pvis) && back.vehicleCheck.flipped === false);
+  check('mirror: input not mutated', dw.pvis[0].chainage === 2);
+  // The design profile's grades are mirrored too: same legs, opposite sign.
+  const g1 = computeDrivewayProfileFrom(dw.pvis).legs.map(l => l.grade === null ? null : +l.grade.toFixed(6));
+  const g2 = computeDrivewayProfileFrom(m.pvis).legs.map(l => l.grade === null ? null : +(-l.grade).toFixed(6)).reverse();
+  check('mirror: leg grades are the same legs read the other way', JSON.stringify(g1) === JSON.stringify(g2));
+}
+{
+  // Boundary rule on a reversed alignment applies to the LAST sloped leg.
+  const legs = computeDrivewayProfileFrom([{chainage:0,rl:10},{chainage:4,rl:10.4},{chainage:10,rl:11.0}]).legs;
+  const fwd = legGradeChecksFrom(legs, {applyBoundaryRule:true, maxGradeBoundary:5, maxGrade:20});
+  const rev = legGradeChecksFrom(legs, {applyBoundaryRule:true, maxGradeBoundary:5, maxGrade:20, boundaryAtEnd:true});
+  check('boundary rule: first sloped leg by default', fwd[0].isBoundary && !fwd[1].isBoundary);
+  check('boundary rule: last sloped leg when boundaryAtEnd', !rev[0].isBoundary && rev[1].isBoundary);
+}
+
+// ======= 2026-11-07: editable vehicle dimensions =======
+{
+  const def = effectiveVehicleTemplate('b99', null);
+  check('effective template: no overrides = the built-in template', def.wheelbase === VEHICLE_TEMPLATES.b99.wheelbase && !def.customised && def.official);
+  const t = effectiveVehicleTemplate('b99', {wheelbase: 2.9, clearance: 0.1, frontRampAngleDeg: 12, rampAngleDeg: -3, rearOverhang: NaN});
+  check('effective template: valid overrides applied', t.wheelbase === 2.9 && t.clearance === 0.1 && t.frontRampAngleDeg === 12);
+  check('effective template: invalid overrides ignored', t.rampAngleDeg === VEHICLE_TEMPLATES.b99.rampAngleDeg && t.rearOverhang === VEHICLE_TEMPLATES.b99.rearOverhang);
+  check('effective template: marked customised, no longer "official"', t.customised === true && t.official === false);
+  check('effective template: built-in template not mutated', VEHICLE_TEMPLATES.b99.wheelbase === 3.05);
+  const same = effectiveVehicleTemplate('b85', {wheelbase: VEHICLE_TEMPLATES.b85.wheelbase});
+  check('effective template: an override equal to the default is not "customised"', !same.customised);
+  // A steeper approach angle can only increase clearance at the front.
+  const ground = (ch) => ch > 6 ? 10 + (ch-6)*0.25 : 10; // 25% ramp starting at ch 6
+  const flatFront = sweepVehicleTemplateFrom(Object.assign({}, def, {frontRampAngleDeg: 0}), 2.2, ground);
+  const angled = sweepVehicleTemplateFrom(def, 2.2, ground);
+  check('approach angle: front overhang over a rising ramp clears more than a flat front', angled.minClearance > flatFront.minClearance);
+}
+
+// ======= 2026-11-08: breaklines =======
+function edgeSetOf(tris){
+  const s = new Set();
+  for (const t of tris) for (let k=0;k<3;k++){ const a=t[k], b=t[(k+1)%3]; s.add(Math.min(a,b)+'_'+Math.max(a,b)); }
+  return s;
+}
+function allEdgesPresent(tris, edges){
+  const s = edgeSetOf(tris);
+  for (let i=0;i<edges.length;i+=2) if (!s.has(Math.min(edges[i],edges[i+1])+'_'+Math.max(edges[i],edges[i+1]))) return false;
+  return true;
+}
+{
+  // prepareConstrainedInput: snapping, splitting, duplicates, crossings.
+  const pts = [{x:0,y:0,z:1},{x:10,y:0,z:2},{x:5,y:0,z:9},{x:0,y:5,z:0},{x:10,y:5,z:0},{x:0,y:0,z:7}];
+  const prep = prepareConstrainedInput(pts, [
+    {layer:'K', vertices:[{x:0.0004,y:0,z:1},{x:10,y:0.0003,z:2}]},  // snaps to 0 and 1, split at point 2 (5,0)
+    {layer:'K', vertices:[{x:10,y:0,z:2},{x:0,y:0,z:1}]},           // same segment reversed - merged
+    {layer:'X', vertices:[{x:2,y:-1,z:0},{x:2,y:1,z:0}]}             // crosses the kerb line - dropped
+  ]);
+  check('breaklines prep: exact X/Y duplicate point dropped', prep.points.filter(p => p.x===0 && p.y===0).length === 1);
+  check('breaklines prep: kerb vertices snap onto the survey points (only the crossing line adds points)', prep.points.length === 5 + 2);
+  check('breaklines prep: segment split at the point lying on it, duplicate merged', prep.segments === 2 &&
+    prep.edges.join(',') === '0,2,2,1');
+  check('breaklines prep: a segment crossing a kept one is skipped and counted', prep.skippedCrossing === 1);
+  check('breaklines prep: input points array not mutated', pts.length === 6);
+  const none = prepareConstrainedInput(pts, []);
+  check('breaklines prep: no breaklines = no edges', none.edges.length === 0 && none.segments === 0);
+}
+{
+  // Constrained triangulation keeps the triangle count (2n-2-h holds for
+  // ANY triangulation of the same points) and every kept edge ends up as
+  // a triangle edge.
+  const rand = mulberry32(7);
+  const pts = [];
+  for (let i=0;i<800;i++) pts.push({x: rand()*200, y: rand()*200, z: rand()});
+  const bls = [];
+  for (let i=0;i<60;i++){
+    const x = rand()*180, y = rand()*180;
+    bls.push({layer:'L', vertices:[{x, y, z:1}, {x: x+rand()*15, y: y+rand()*15, z:2}, {x: x+15, y: y+rand()*15, z:3}]});
+  }
+  const prep = prepareConstrainedInput(pts, bls);
+  const r = triangulateConstrained(prep.points, prep.edges);
+  const h = convexHullSize(prep.points);
+  check('constrained TIN: triangle count still 2n-2-h', r.triangles.length === 2*prep.points.length - 2 - h);
+  check('constrained TIN: no edge failed', r.failed === 0);
+  check('constrained TIN: every kept breakline edge is a triangle edge', allEdgesPresent(r.triangles, prep.edges));
+  const plain = triangulateConstrained(pts, null);
+  check('constrained TIN: no edges = plain triangulate()', JSON.stringify(plain.triangles) === JSON.stringify(triangulate(pts)) && plain.failed === 0);
+}
+{
+  // A kerb: gutter invert line at RL 10.00 along y=0, kerb top 30mm
+  // behind it at 10.15, footpath behind. Kerb shots every 5m only, so
+  // plain Delaunay ramps across the face; with the two kerb strings as
+  // breaklines a section across it must step the full 150mm inside the
+  // 30mm face.
+  const pts = [];
+  for (let x=0;x<=20;x+=5){ pts.push({x, y:0, z:10}); pts.push({x, y:0.03, z:10.15}); }
+  for (let x=0;x<=20;x+=2.5){ pts.push({x, y:-0.45, z:10.04}); pts.push({x, y:-3, z:10.1}); pts.push({x, y:1.5, z:10.18}); pts.push({x, y:4, z:10.25}); }
+  const kerb = (y, z) => ({layer:'KERB', vertices:[0,5,10,15,20].map(x => ({x, y, z}))});
+  const prep = prepareConstrainedInput(pts, [kerb(0, 10), kerb(0.03, 10.15)]);
+  const r = triangulateConstrained(prep.points, prep.edges);
+  const idx = buildTriIndex(prep.points, r.triangles);
+  let worst = 0;
+  for (const x of [1.3, 3.7, 6.1, 8.8, 11.2, 13.9, 16.4, 18.6]){
+    const below = elevationAt(x, -0.001, prep.points, r.triangles, idx);
+    const above = elevationAt(x, 0.031, prep.points, r.triangles, idx);
+    worst = Math.max(worst, Math.abs((above - below) - 0.15));
+  }
+  check('kerb breaklines: section steps the full 150mm across the 30mm kerb face', worst < 0.005);
+  check('kerb breaklines: both kerb strings are triangle edges', allEdgesPresent(r.triangles, prep.edges) && prep.segments === 8);
+  const plainIdx = buildTriIndex(pts, triangulate(pts));
+  let plainWorst = 0;
+  for (const x of [1.3, 3.7, 6.1, 8.8, 11.2, 13.9, 16.4, 18.6]){
+    plainWorst = Math.max(plainWorst, Math.abs((elevationAt(x, 0.031, pts, triangulate(pts), plainIdx) - elevationAt(x, -0.001, pts, triangulate(pts), plainIdx)) - 0.15));
+  }
+  check('kerb breaklines: (control) plain Delaunay loses the kerb face somewhere', plainWorst > 0.02);
+}
+{
+  // arcBreakline: levels from the surveyed points on the arc, not the
+  // arc's single DXF elevation.
+  const arc = {cx:0, cy:0, z:50, r:10, startDeg:0, endDeg:90};
+  const on = [{x:10,y:0,z:1}, {x:10*Math.cos(Math.PI/4), y:10*Math.sin(Math.PI/4)+0.004, z:3}, {x:0.003,y:10,z:2}];
+  const off = [{x:5,y:5,z:99}];
+  const v = arcBreakline(arc, on.concat(off));
+  check('arc: starts and ends on the surveyed end points', v[0].z === 1 && v[v.length-1].z === 2 && v[0].x === 10 && v[v.length-1].x === 0.003);
+  check('arc: surveyed mid point is a vertex at its own X/Y/Z', v.some(p => p.z === 3 && p.y === on[1].y));
+  check('arc: point off the arc ignored', !v.some(p => p.z === 99));
+  check('arc: vertices lie on the arc', v.every(p => Math.abs(Math.hypot(p.x, p.y) - 10) < 0.01));
+  const firstHalf = v.filter(p => p.x > on[1].x + 1e-9);
+  check('arc: levels interpolate between surveyed points', firstHalf.every((p,i,a) => i===0 || p.z >= a[i-1].z) && firstHalf.every(p => p.z >= 1 && p.z <= 3));
+  let maxSag = 0;
+  for (let i=0;i<v.length-1;i++){ const mx=(v[i].x+v[i+1].x)/2, my=(v[i].y+v[i+1].y)/2; maxSag = Math.max(maxSag, 10 - Math.hypot(mx,my)); }
+  check('arc: chords within 5mm of the true arc', maxSag <= 0.0051);
+  const flat = arcBreakline(arc, []);
+  check('arc: no surveyed points = keeps its own elevation', flat.every(p => p.z === 50));
+  const mir = arcBreakline({cx:0, cy:0, z:50, r:10, startDeg:0, endDeg:90, mirrorX:true}, []);
+  check('arc: OCS (0,0,-1) mirrors x', Math.abs(mir[0].x + 10) < 1e-9 && Math.abs(mir[mir.length-1].y - 10) < 1e-9);
+  const wrap = arcBreakline({cx:0, cy:0, z:5, r:10, startDeg:350, endDeg:10}, []);
+  check('arc: sweep across 0 degrees goes the short way', wrap.every(p => p.x > 9.8));
+}
+{
+  // DXF: LINE, ARC and varying-level 3D POLYLINE are breaklines; a
+  // constant-level polyline (contour) is not.
+  const dxf = ['0','SECTION','2','ENTITIES',
+    '0','POINT','8','KERB_TOP','10','10','20','0','30','1',
+    '0','POINT','8','KERB_TOP','10','0','20','10','30','2',
+    '0','LINE','8','KERB_TOP','10','10','20','0','30','1','11','20','21','0','31','0.5',
+    '0','ARC','8','KERB_TOP','10','0','20','0','30','9','40','10','50','0','51','90',
+    '0','LINE','8','EDGE','10','0','20','0','30','3','11','1','21','1','31','3',
+    '0','POLYLINE','8','STRING','66','1','70','8',
+    '0','VERTEX','8','STRING','10','0','20','0','30','1',
+    '0','VERTEX','8','STRING','10','5','20','0','30','2',
+    '0','SEQEND',
+    '0','POLYLINE','8','CONTOUR','66','1','70','8',
+    '0','VERTEX','8','CONTOUR','10','0','20','0','30','4',
+    '0','VERTEX','8','CONTOUR','10','5','20','5','30','4',
+    '0','SEQEND',
+    '0','ENDSEC','0','EOF'].join('\n');
+  const geo = parseDXFFile(dxf);
+  const byLayer = (l) => geo.breaklines.filter(b => b.layer === l);
+  check('dxf breaklines: LINE read with both end levels', byLayer('EDGE').length === 1 && byLayer('EDGE')[0].vertices[1].z === 3);
+  check('dxf breaklines: kerb LINE + ARC both read', byLayer('KERB_TOP').length === 2);
+  const arcBl = byLayer('KERB_TOP').find(b => b.vertices.length > 2);
+  check("dxf breaklines: ARC levels come from its layer's points, not its own 9.0", arcBl && arcBl.vertices[0].z === 1 && arcBl.vertices[arcBl.vertices.length-1].z === 2);
+  check('dxf breaklines: varying-level 3D polyline is a breakline', byLayer('STRING').length === 1);
+  check('dxf breaklines: constant-level polyline (contour) is not', byLayer('CONTOUR').length === 0 && geo.polylines.some(p => p.layer === 'CONTOUR'));
+  const layers = computeLayerBreakdown(geo.points, geo.breaklines);
+  const edge = layers.find(l => l.layer === 'EDGE'), kt = layers.find(l => l.layer === 'KERB_TOP');
+  check('layer breakdown: a lines-only layer gets a row', edge && edge.count === 0 && edge.lines === 1);
+  check('layer breakdown: points and lines counted', kt && kt.count === 2 && kt.lines === 2);
+  check('layer breakdown: without breaklines, unchanged shape', computeLayerBreakdown(geo.points).every(l => l.lines === undefined));
+}
+{
+  // Project files: breaklines saved; an older file without the field loads with none.
+  const saved = serializeProject(Object.assign({}, state, {rawPoints: [{x:0,y:0,z:0}], rawBreaklines: [{layer:'K', vertices:[{x:0,y:0,z:1},{x:1,y:0,z:1}]}]}),
+    {filters:{ignoreZero:true, ignoreFar:false, farLimit:0, useBreaklines:false}, datum:{enabled:false, rl:0}, view:{verticalExaggeration:1}});
+  check('project: breaklines saved', saved.rawBreaklines.length === 1 && saved.filters.useBreaklines === false);
+  applyProjectData(JSON.parse(JSON.stringify(saved)));
+  check('project: breaklines restored', state.rawBreaklines && state.rawBreaklines[0].vertices.length === 2);
+  const old = JSON.parse(JSON.stringify(saved)); delete old.rawBreaklines;
+  applyProjectData(old);
+  check('project: older file (no breaklines field) loads with none', state.rawBreaklines === null);
+}
+
+// ---- Offsite layers (2026-11-08): layers sitting away from the rest ----
+{
+  const grid = (layer, x0, y0, n, step) => { const a = []; for (let i=0;i<n;i++) for (let j=0;j<n;j++) a.push({x:x0+i*step, y:y0+j*step, z:10, layer}); return a; };
+  const site = [...grid('KERB', 0, 0, 5, 2), ...grid('TOPO', 4, 4, 5, 2)];       // 0..12 m
+  const far = grid('DTM', -60, 0, 8, 1);                                         // 64 pts, ~55m west
+  let r = findOffsiteLayers([...site, ...far], null, [{x:5,y:5},{x:6,y:9}]);
+  check('offsite: far layer flagged, site layers not', Object.keys(r).join() === 'DTM');
+  check('offsite: direction W', r.DTM && r.DTM.direction === 'W');
+  check('offsite: distance is centroid to centroid (62.55m)', r.DTM && approx(r.DTM.distance, Math.hypot(62.5, 2.5), 1e-9));
+  r = findOffsiteLayers([...site, ...grid('BIG', -60, 0, 12, 1)], null, [{x:5,y:5}]);
+  check('offsite: alignments decide the main group even when the far layer has more points', Object.keys(r).join() === 'BIG');
+  r = findOffsiteLayers([...site, ...grid('BIG', -60, 0, 12, 1)], null, null);
+  check('offsite: no alignments -> the group with most points is main', Object.keys(r).sort().join() === 'KERB,TOPO');
+  check('offsite: one group -> nothing flagged', Object.keys(findOffsiteLayers(site, null, null)).length === 0);
+  check('offsite: a 4m gap joins the group', Object.keys(findOffsiteLayers([...site, ...grid('NEAR', 16, 0, 3, 1)], null, null)).length === 0);
+  check('offsite: a 6m gap splits it off', Object.keys(findOffsiteLayers([...site, ...grid('NEAR', 18, 0, 3, 1)], null, null)).join() === 'NEAR');
+  check('offsite: chains of near layers stay one group', Object.keys(findOffsiteLayers([...site, ...grid('A', 15, 0, 3, 1), ...grid('B', 21, 0, 3, 1)], null, null)).length === 0);
+  const bl = [{layer:'RAIL', vertices:[{x:0,y:80,z:5},{x:1,y:81,z:5}]}];
+  r = findOffsiteLayers(site, bl, null);
+  check('offsite: a lines-only layer is checked too (N)', r.RAIL && r.RAIL.direction === 'N');
+  check('offsite: single layer -> nothing', Object.keys(findOffsiteLayers(grid('X',0,0,3,1), null, null)).length === 0);
+  const rows = computeLayerBreakdown([...site, ...far], null, [{x:5,y:5}]);
+  check('offsite: computeLayerBreakdown marks only the far row', rows.filter(l => l.offsite).map(l => l.layer).join() === 'DTM');
+  check('offsite: describe metres', describeOffsite({distance:52.6, direction:'W'}) === '~53m W');
+  check('offsite: describe 100s rounded to 10m', describeOffsite({distance:764, direction:'NW'}) === '~760m NW');
+  check('offsite: describe km', describeOffsite({distance:6256800, direction:'S'}) === '~6,257km S');
+}
+
+// ---- Crossfall read square across the alignments (2026-11-08) ----
+{
+  const cumOf = v => { const c=[0]; for (let i=1;i<v.length;i++) c.push(c[i-1]+Math.hypot(v[i].x-v[i-1].x, v[i].y-v[i-1].y)); return c; };
+  const A = [{x:0,y:0},{x:10,y:0}], B = [{x:0,y:2},{x:10,y:12}];
+  let r = chainageSquareAcross(A, cumOf(A), 5, B, cumOf(B));
+  check('square across: hits an angled B straight across, not at its nearest point', approx(r.chainage, 5*Math.SQRT2, 1e-9) && approx(r.offset, 7, 1e-9));
+  check('square across: nearest-point method gives a different answer there', !approx(chainageOfClosestPoint(B, cumOf(B), {x:5,y:0}).offset, 7, 0.5));
+  const L = [{x:0,y:0},{x:10,y:0},{x:10,y:10}], L2 = [{x:0,y:2},{x:8,y:2},{x:8,y:10}];
+  const t = tangentAtChainage(L, cumOf(L), 10);
+  check('square across: tangent at a corner vertex is the average direction', approx(t.x, Math.SQRT1_2, 1e-9) && approx(t.y, Math.SQRT1_2, 1e-9));
+  r = chainageSquareAcross(L, cumOf(L), 10, L2, cumOf(L2));
+  check('square across: at a corner, the bisector hits the inside corner', approx(r.chainage, 8, 1e-9) && approx(r.offset, 2*Math.SQRT2, 1e-9));
+  r = chainageSquareAcross(L, cumOf(L), 15, L2, cumOf(L2));
+  check('square across: after the corner it reads across the new leg', approx(r.chainage, 8 + 3, 1e-9) && approx(r.offset, 2, 1e-9));
+  const far = [{x:20,y:5},{x:30,y:5}];
+  r = chainageSquareAcross(A, cumOf(A), 5, far, cumOf(far));
+  check('square across: misses B -> falls back to nearest point', approx(r.chainage, 0, 1e-9) && approx(r.offset, Math.hypot(15, 5), 1e-9));
+  check('square across: is the default crossfall method', /crossfall: {[^}]*projectionMode: 'perpendicular'/.test(fs.readFileSync(new URL('../src/state.ts', import.meta.url), 'utf8')));
+}
+
+// ---- Sample driveway job (2026-11-08) ----
+{
+  const site = buildSampleSite();
+  const again = buildSampleSite();
+  check('sample: deterministic', JSON.stringify(site) === JSON.stringify(again));
+  check('sample: hundreds of points on named layers', site.points.length > 500 && site.points.every(p => p.layer && isFinite(p.z)));
+  check('sample: kerb and gutter breaklines present', ['KERB_LIP','KERB_INVERT','KERB_TOP','KERB_BACK'].every(l => site.breaklines.some(b => b.layer === l)));
+  const prep = prepareConstrainedInput(site.points, site.breaklines);
+  const r = triangulateConstrained(prep.points, prep.edges);
+  check('sample: every breakline segment built in (none skipped or failed)', prep.skippedCrossing === 0 && r.failed === 0);
+  const idx = buildTriIndex(prep.points, r.triangles);
+  // v = offset across the (curved) street from its baseline.
+  const atV = (x, v) => elevationAt(x, v + sampleBend(x), prep.points, r.triangles, idx);
+  check('sample: the street bends (kerb ~21 deg off east-west at the driveway)', approx(Math.atan(Math.abs(0.024*(11-27))) * 180/Math.PI, 21, 0.5));
+  check('sample: barrier kerb away from the driveway steps 150mm', approx(atV(20, -0.55) - atV(20, -0.6), 0.15, 0.004));
+  check('sample: layback across the driveway: 30mm lip', approx(atV(11, -0.55) - atV(11, -0.6), 0.03, 0.004));
+  check('sample: layback rises 70mm to its back, 450mm from the invert', approx(atV(11, -0.15) - atV(11, -0.55), 0.07, 0.004));
+  check('sample: splay halfway is halfway between kerb and layback', approx(atV(13.45, -0.55) - atV(13.45, -0.6), 0.09, 0.005));
+  check('sample: the lot falls to the east as well as climbing', atV(5, 15) - atV(35, 15) > 0.6);
+  const [A, B] = site.alignments;
+  const cumOf = v => { const c=[0]; for (let i=1;i<v.length;i++) c.push(c[i-1]+Math.hypot(v[i].x-v[i-1].x, v[i].y-v[i-1].y)); return c; };
+  const cA = cumOf(A.vertices), cB = cumOf(B.vertices);
+  check('sample: two alignments 3m apart at the kerb', site.alignments.length === 2 && approx(Math.hypot(B.vertices[0].x-A.vertices[0].x, B.vertices[0].y-A.vertices[0].y), 3, 0.002));
+  check('sample: driveway bends — inside (west) edge ~1.1m shorter', approx(cB.at(-1) - cA.at(-1), 3 * Math.atan(0.384), 0.05));
+  const rules = {maxGrade: 20, applyBoundaryRule: true, maxGradeBoundary: 5, transitionThreshold: 12.5, minTransitionLength: 2};
+  for (const al of site.alignments){
+    const d = al.design, prof = computeDrivewayProfileFrom(d.pvis), cum = cumOf(al.vertices);
+    const legs = legGradeChecksFrom(prof.legs, rules), bi = legs.findIndex(l => l.isBoundary);
+    check('sample: ' + al.label + ' design passes the default checks', computeDrivewayComplianceFrom(prof, rules).every(c => c.cls === 'diag-ok') && legs.every(l => !l.exceeds));
+    check('sample: ' + al.label + ' footpath crossing is the boundary leg, 4%', bi >= 0 && approx(prof.legs[bi].grade, 4, 0.05));
+    check('sample: ' + al.label + ' crosses the footpath at 2% over 1.2m (2004 Cl 3.3(d))', (footpathCheckFrom(prof, Object.assign({applyFootpathRule: true}, rules)) || {}).cls === 'diag-ok');
+    check('sample: ' + al.label + ' ends on the garage floor', d.pvis[d.pvis.length-1].rl === site.garage.ffl && approx(d.pvis[d.pvis.length-1].chainage, cum.at(-1), 0.001));
+    const pAt = ch => pointAtChainage(al.vertices, cum, ch);
+    const k = pAt(d.kerbChainage), kb = pAt(d.pvis[3].chainage);
+    check('sample: ' + al.label + ' kerb invert on the surveyed invert', approx(elevationAt(k.x, k.y, prep.points, r.triangles, idx), d.kerbInvertRl, 0.004));
+    check('sample: ' + al.label + ' layback lands on the surveyed layback', approx(elevationAt(kb.x, kb.y, prep.points, r.triangles, idx), d.pvis[3].rl, 0.006));
+  }
+  check('sample: no layer flagged as offsite', Object.keys(findOffsiteLayers(site.points, site.breaklines, site.alignments.flatMap(a => a.vertices))).length === 0);
+  const rlAt = (pv) => (c) => { for (let i=1;i<pv.length;i++){ const a=pv[i-1], b=pv[i]; if (c >= a.chainage && c <= b.chainage && b.chainage > a.chainage) return a.rl + (b.rl-a.rl)*(c-a.chainage)/(b.chainage-a.chainage); } return null; };
+  const sq = computeCrossfallSeriesPerpendicular(A.vertices, cA, B.vertices, cB, rlAt(A.design.pvis), rlAt(B.design.pvis), 0, cA.at(-1), 0.25);
+  const mc = computeCrossfallSeriesFrom(rlAt(A.design.pvis), rlAt(B.design.pvis), 0, Math.min(cA.at(-1), cB.at(-1)), 0.25, () => 3);
+  const sqAt = ch => sq.reduce((p, q) => Math.abs(q.chainage-ch) < Math.abs(p.chainage-ch) ? q : p);
+  check('sample: square-across crossfall ~-42mm at the kerb (street falls east)', approx(sqAt(5).crossfall, -0.042, 0.006));
+  check('sample: square-across crossfall is nil on the garage floor', approx(sq[sq.length-1].crossfall, 0, 0.002));
+  let widthOk = true; for (let ch = 0; ch <= cA.at(-1); ch += 0.25) if (Math.abs(chainageSquareAcross(A.vertices, cA, ch, B.vertices, cB).offset - 3) > 0.02) widthOk = false;
+  check('sample: square-across reads 3m across the whole way, bend included', widthOk);
+  const fine = computeCrossfallSeriesPerpendicular(A.vertices, cA, B.vertices, cB, rlAt(A.design.pvis), rlAt(B.design.pvis), 10, 15, 0.05);
+  let jump = 0; for (let i=1;i<fine.length;i++) jump = Math.max(jump, Math.abs(fine[i].crossfall - fine[i-1].crossfall));
+  check('sample: crossfall reads smoothly round the bend (no steps at curve vertices)', fine.length > 90 && jump < 0.008);
+  check('sample: matching chainage would wrongly report >150mm on the bend', Math.min(...mc.map(p => p.crossfall)) < -0.15);
+}
+
+// ---- AS/NZS 2890.1:2004 domestic driveway rules (2026-11-08) ----
+{
+  const P = (pts) => computeDrivewayProfileFrom(pts.map(([c, r, t]) => t ? {chainage:c, rl:r, template:t} : {chainage:c, rl:r}));
+  const base = {maxGrade: 25, applyBoundaryRule: true, maxGradeBoundary: 5, transitionThreshold: 12.5, transitionThresholdSag: 15, minTransitionLength: 2};
+  // Sag of 14% with a short leg: under the 15% sag threshold -> no transition row.
+  let rows = computeDrivewayComplianceFrom(P([[0,10],[5,10.2],[5.5,10.29]]), base);
+  check('2004: a 14% sag (4% -> 18%) is under the 15% sag threshold', !rows.some(r => /Grade change/.test(r.text)));
+  rows = computeDrivewayComplianceFrom(P([[0,10],[5,10.9],[5.5,10.92]]), base);
+  check('2004: a 14% summit (18% -> 4%) over a short leg is flagged against 12.5%', rows.some(r => r.cls === 'diag-warn' && /summit/.test(r.text) && /12\.5% summit/.test(r.text)));
+  rows = computeDrivewayComplianceFrom(P([[0,10],[5,10.2],[5.5,10.3]]), base);
+  check('2004: a 16% sag over a short leg is flagged against 15%', rows.some(r => r.cls === 'diag-warn' && /sag/.test(r.text) && /15\.0% sag/.test(r.text)));
+  check('2004: 24% passes the 25% domestic maximum', computeDrivewayComplianceFrom(P([[0,10],[10,12.4]]), Object.assign({}, base, {applyBoundaryRule: false})).every(r => r.cls === 'diag-ok'));
+  // Footpath: kerb, layback, then 4% / 2% (1.2m) / 4% to the boundary, then 15%.
+  const fpRules = Object.assign({}, base, {applyFootpathRule: true, footpathMaxGrade: 2.5, footpathMinLength: 1.0});
+  const good = P([[3.5,10.025,'layback'],[4,10,'kerb'],[4,10.03,'kerb'],[4.45,10.1,'layback'],[5.8,10.154],[7,10.178],[8.6,10.242],[18,11.652]]);
+  let fp = footpathCheckFrom(good, fpRules);
+  check('2004 footpath: a 1.2m stretch at 2% across the crossing passes', fp && fp.cls === 'diag-ok' && /1\.20m/.test(fp.text));
+  const bad = P([[4,10,'kerb'],[4,10.03,'kerb'],[4.45,10.1,'layback'],[8.6,10.266],[18,11.676]]);
+  fp = footpathCheckFrom(bad, fpRules);
+  check('2004 footpath: 4% all the way across is flagged (Cl 3.3(d))', fp && fp.cls === 'diag-warn' && /3\.3\(d\)/.test(fp.text));
+  check('2004 footpath: rule off -> no row', footpathCheckFrom(bad, base) === null);
+  const reversed = P([[0,11.676],[9.4,10.266],[13.55,10.1,'layback'],[14,10.03,'kerb'],[14,10,'kerb']]);
+  check('2004 footpath: on a reversed alignment it searches from the road end', footpathCheckFrom(reversed, Object.assign({boundaryAtEnd: true}, fpRules)).cls === 'diag-warn');
+  check('2004 footpath: the row appears in the compliance list', computeDrivewayComplianceFrom(good, fpRules).some(r => /Across the footpath/.test(r.text)));
+}
+
+// ---- Real-job checks (private) ----
+// Checks against an actual client survey live in test/private/, which is
+// never published (publish_public.py excludes it) and is skipped when absent.
+{
+  const priv = new URL('./private/real_job.mjs', import.meta.url);
+  if (fs.existsSync(priv)){
+    const mod = await import(priv);
+    mod.run({ check, approx });
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

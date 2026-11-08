@@ -52,6 +52,10 @@ export interface RawAlignment {
   label: string;
   layer: string | null;
   vertices: Point2[];
+  // True once the user has reversed this alignment's direction (its
+  // vertices are stored already reversed — this flag is for display and
+  // for which end the boundary grade rule applies to).
+  reversed?: boolean;
 }
 
 // One design point (PVI) in a driveway design. `template` tags a point
@@ -81,8 +85,18 @@ export interface DrivewayRules {
   maxGrade: number;
   applyBoundaryRule: boolean;
   maxGradeBoundary: number;
-  transitionThreshold: number;
+  transitionThreshold: number;      // summit (crest) grade change needing a transition, %
+  transitionThresholdSag?: number;  // sag (dip) grade change needing a transition, % (2004: 15)
   minTransitionLength: number;
+  // Across the footpath (AS/NZS 2890.1:2004 Cl 3.3(d), via Cl 2.6.2): a
+  // stretch at most footpathMaxGrade, at least footpathMinLength long.
+  applyFootpathRule?: boolean;
+  footpathMaxGrade?: number;
+  footpathMinLength?: number;
+  // The stricter boundary limit normally applies to the FIRST sloped
+  // leg (road end at chainage 0). On a reversed alignment the road end
+  // is the far end, so it applies to the LAST sloped leg instead.
+  boundaryAtEnd?: boolean;
 }
 
 // Per-leg grade-limit verdict from legGradeChecksFrom(). `checked` is
@@ -134,8 +148,12 @@ export interface VehicleTemplate {
   rearOverhang: number;
   rearFlatLeadIn: number;
   rampAngleDeg: number;
+  // Front overhang approach angle (degrees); 0/absent = flat front.
+  frontRampAngleDeg?: number;
   clearance: number;
   official: boolean;
+  // Set by effectiveVehicleTemplate when the user has edited any dimension.
+  customised?: boolean;
 }
 
 export interface VehicleSweepSample {
@@ -240,7 +258,10 @@ export interface DrivewayState {
   pvis: Pvi[];
   frontier: { chainage: number; rl: number } | null;
   kerbInvert: { chainage: number; rl: number } | null;
-  vehicleCheck: { enabled: boolean; model: string; sweepChainage: number | null; flipped: boolean };
+  // `dims`: per-model user overrides of the vehicle dimensions (absent =
+  // the built-in defaults), saved with the design in the .gradeline file.
+  vehicleCheck: { enabled: boolean; model: string; sweepChainage: number | null; flipped: boolean;
+    dims?: Record<string, Partial<Record<'wheelbase' | 'frontOverhang' | 'rearOverhang' | 'clearance' | 'frontRampAngleDeg' | 'rampAngleDeg', number>>> };
   cutFillCorridorWidth: number | null;
 }
 
@@ -257,6 +278,14 @@ export interface DecodedPngImage {
 export interface PointLayer {
   layer: string;
   count: number;
+  lines?: number; // breaklines on this layer (2026-11-08)
+  // Set when the layer sits away from the rest of the survey (findOffsiteLayers).
+  offsite?: OffsiteLayer;
+}
+
+export interface OffsiteLayer {
+  distance: number;  // metres, layer centroid to the main survey's centroid
+  direction: string; // 8-point compass, e.g. "W" — which way the layer lies from the main survey
 }
 
 // DXF parsing's output shape (dxf.ts).
@@ -270,6 +299,23 @@ export interface DxfGeometry {
   points: Point3[];
   polylines: DxfPolyline[];
   faceCount: number;
+  breaklines: Breakline[];
+}
+
+// A breakline (2026-11-08): a 3D string the TIN's triangles must follow —
+// read from DXF LINE/ARC entities and 3D POLYLINEs with varying levels
+// (dxf.ts). Raw, uncentered coordinates, like rawPoints. Used only when
+// its layer is ticked in the layer list, same as that layer's points.
+export interface Breakline {
+  layer: string;
+  vertices: Point3[];
+}
+
+// What the last rebuild did with the breaklines, for the sidebar notice.
+export interface BreaklineStats {
+  segments: number;        // constraint segments sent to the triangulation
+  skippedCrossing: number; // dropped before triangulating: crossed an earlier one
+  failed: number;          // couldn't be forced in by the triangulation itself
 }
 
 // Plot metadata the profile/crossfall canvases stash on themselves
@@ -293,6 +339,7 @@ export interface XfPlotMeta {
   padL: number;
   plotW: number;
   rangeEnd: number;
+  yMax?: number; // canvas y below which clicks don't move the marker (the cross-section panel)
 }
 declare global {
   interface HTMLCanvasElement {
@@ -339,21 +386,6 @@ declare global {
   }
 }
 
-// File Handling API (PLAN.md Stage 4's .gradeline file association) —
-// also not in TypeScript's bundled DOM lib. Chromium-only, and only
-// present for an installed PWA; pwa.ts always feature-detects before
-// touching it.
-export interface LaunchParams {
-  files: FileSystemFileHandleLike[];
-}
-export interface LaunchQueue {
-  setConsumer(consumer: (launchParams: LaunchParams) => void | Promise<void>): void;
-}
-declare global {
-  interface Window {
-    launchQueue?: LaunchQueue;
-  }
-}
 
 // Tauri desktop build's global API (app.withGlobalTauri in
 // desktop/src-tauri/tauri.conf.json) — only `core.invoke` is used, for
@@ -375,6 +407,7 @@ export interface ProjectFilterSettings {
   ignoreZero: boolean;
   ignoreFar: boolean;
   farLimit: number;
+  useBreaklines?: boolean; // 2026-11-08; missing = on
 }
 export interface ProjectDatumSettings {
   enabled: boolean;
@@ -386,6 +419,7 @@ export interface ProjectViewSettings {
   wireframe: boolean;
   points: boolean;
   alignment: boolean;
+  breaklines?: boolean; // 3D "show breaklines" toggle, 2026-11-08; missing = on
   profileTrueScale: boolean;
   sampleInterval: number;
   gradeBreakTolerance: number;
@@ -428,6 +462,9 @@ export interface ProjectFile {
   filters: ProjectFilterSettings;
   datum: ProjectDatumSettings;
   view: ProjectViewSettings;
+  // Added 2026-11-08; absent from files saved before breaklines existed
+  // (those load with none, exactly as they were built then).
+  rawBreaklines?: Breakline[];
 }
 
 // The app's one big shared mutable state object (state.ts).
@@ -443,6 +480,9 @@ export interface AppState {
   verticalExaggeration: number;
   currentView: ViewName;
   rawPoints: Point3[] | null;
+  rawBreaklines: Breakline[] | null;
+  constraintEdges: number[] | null;   // breakline edges of the current TIN, indices into points
+  breaklineStats: BreaklineStats | null;
   pointLayers: PointLayer[] | null;
   activePointLayers: Set<string> | null;
   rawAlignments: RawAlignment[];

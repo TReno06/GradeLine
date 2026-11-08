@@ -17,13 +17,13 @@
 // centralized here), not a new convention invented for this port.
 import { $ } from './dom.ts';
 import { state, drivewayStateFor } from './state.ts';
-import { parseDXFFile, pickAlignmentCandidates, buildAlignmentEntries, computeLayerBreakdown } from './dxf.ts';
-import { initThree, rebuildTerrainMesh, buildPointsMesh, rebuildAlignmentLine, clearGroup, three, hidePointInspector, requestRender } from './view3d.ts';
+import { parseDXFFile, pickAlignmentCandidates, buildAlignmentEntries, computeLayerBreakdown, describeOffsite } from './dxf.ts';
+import { initThree, rebuildTerrainMesh, buildPointsMesh, buildBreaklineMesh, rebuildAlignmentLine, clearGroup, three, hidePointInspector, requestRender } from './view3d.ts';
 import { computeLongSection, setProfileData } from './longsection.ts';
 import { drawProfile } from './rendering.ts';
 import {
   setRawDataAndBuild, rebuildFromRaw, renderAlignmentSelector,
-  renderLayerFilterUI, updateStatsAndLegend, clearAllData, loadSampleData, handleCancelTriangulation
+  renderLayerFilterUI, updateStatsAndLegend, clearAllData, loadSampleData, handleCancelTriangulation, reverseAlignment
 } from './pipeline.ts';
 import { exportLongSectionCSV, exportSectionDXF, exportSurfaceDXF, exportCrossfallDXF } from './export.ts';
 import { printCurrentScreen } from './printing.ts';
@@ -32,6 +32,9 @@ import type { Point3, DxfPolyline } from './types.ts';
 import './jobs.ts'; // self-wires the Job section's Save/Save As/Open buttons
 import './pwa.ts'; // self-wires service-worker registration + .gradeline file-launch handling
 import { restoreLastSettings } from './settings.ts';
+import { initLayout } from './layout.ts';
+import { applyTheme, savedTheme, currentTheme, onThemeChange } from './theme.ts';
+import { renderDrivewayUI } from './driveway.ts';
 
 // ============================================================
 // DXF load
@@ -80,8 +83,14 @@ $<HTMLInputElement>('input-dxf').addEventListener('change', function(this: HTMLI
 
     // Per-layer breakdown of every point that could feed the TIN, so the
     // layer-filter checklist can replace manually stripping the DWG.
-    state.pointLayers = computeLayerBreakdown(pts);
+    // Alignment vertices anchor which group of layers is "the site" for
+    // the offsite-layer note (dxf.ts findOffsiteLayers).
+    var anchorVerts = pickAlignmentCandidates(cutCandidates).flatMap(function(p){ return p.vertices; });
+    state.pointLayers = computeLayerBreakdown(pts, geo.breaklines, anchorVerts);
     var layerNames = state.pointLayers.map(function(l){ return l.layer; });
+    if (geo.breaklines.length){
+      notices.push(geo.breaklines.length + ' 3D line' + (geo.breaklines.length>1?'s':'') + ' read as breaklines (used on ticked layers)');
+    }
     // Only force a deliberate per-layer choice when there's actually a
     // choice to make; a single-layer DXF has no filter UI to make it in
     // (see renderLayerFilterUI), so it must stay implicitly active.
@@ -89,6 +98,13 @@ $<HTMLInputElement>('input-dxf').addEventListener('change', function(this: HTMLI
     renderLayerFilterUI();
     if (layerNames.length > 1){
       notices.push(layerNames.length + ' layers — untick any that aren’t survey data below instead of cleaning the DWG by hand');
+      var off = state.pointLayers.filter(function(l){ return l.offsite; });
+      if (off.length){
+        var named = off.slice(0, 4).map(function(l){ return l.layer + ' (' + describeOffsite(l.offsite!) + ')'; }).join(', ') +
+          (off.length > 4 ? ' + ' + (off.length - 4) + ' more' : '');
+        notices.push(off.length + ' layer' + (off.length>1?'s sit':' sits') + ' away from the rest of the survey: ' + named +
+          ' — check ' + (off.length>1?'they\'re':'it\'s') + ' in the right position before ticking (marked ⚠ below)');
+      }
     }
 
     // Alignment candidates: prefer a layer named like "alignment"; fall
@@ -119,7 +135,7 @@ $<HTMLInputElement>('input-dxf').addEventListener('change', function(this: HTMLI
     $('dxf-notice').textContent = notices.join(' — ');
     $('dxf-notice').style.display = 'block';
 
-    setRawDataAndBuild(pts);
+    setRawDataAndBuild(pts, geo.breaklines);
   };
   reader.readAsText(file);
 });
@@ -139,6 +155,12 @@ $('btn-cancel-triangulation').addEventListener('click', handleCancelTriangulatio
 
 $('chk-ignore-zero').addEventListener('change', function(){
   if (state.rawPoints && state.rawPoints.length) rebuildFromRaw();
+});
+$('chk-breaklines').addEventListener('change', function(){
+  if (state.rawPoints && state.rawPoints.length) rebuildFromRaw();
+});
+$('chk-show-breaklines').addEventListener('change', function(){
+  buildBreaklineMesh();
 });
 $('chk-ignore-far').addEventListener('change', function(){
   if (state.rawPoints && state.rawPoints.length) rebuildFromRaw();
@@ -212,6 +234,10 @@ $('select-alignment').addEventListener('change', function(this: HTMLSelectElemen
   if (isCrossfallVisible()) drawProfile();
 });
 
+$('btn-reverse-alignment').addEventListener('click', function(){
+  if (state.activeAlignmentIndex >= 0) reverseAlignment(state.activeAlignmentIndex);
+});
+
 $('xf-align-a').addEventListener('change', function(this: HTMLSelectElement){
   state.crossfall.alignA = parseInt(this.value, 10);
   state.crossfall.markerChainage = null; // re-default to the new pair's own worst point
@@ -225,6 +251,12 @@ $('xf-align-b').addEventListener('change', function(this: HTMLSelectElement){
 $('xf-projection-mode').addEventListener('change', function(this: HTMLSelectElement){
   state.crossfall.projectionMode = this.value as 'chainage' | 'perpendicular';
   state.crossfall.markerChainage = null; // re-default to the new mode's own worst point
+  if (isCrossfallVisible()) drawProfile();
+});
+$('xf-design-chainage').addEventListener('change', function(this: HTMLSelectElement){
+  var v = parseFloat(this.value);
+  if (!isFinite(v)) return;
+  state.crossfall.markerChainage = v;
   if (isCrossfallVisible()) drawProfile();
 });
 $('xf-marker-chainage').addEventListener('change', function(this: HTMLInputElement){
@@ -242,5 +274,24 @@ $('point-inspector-close').addEventListener('click', hidePointInspector);
 // ============================================================
 // Init
 // ============================================================
+// Light/dark theme: applied before the 3D scene is built so it starts in
+// the right colours; the button flips it and every view redraws.
+function updateThemeButton(){
+  var light = currentTheme() === 'light';
+  $('btn-toggle-theme-label').textContent = light ? 'Dark' : 'Light';
+  $('btn-toggle-theme').title = light ? 'Switch to dark mode' : 'Switch to light mode';
+}
+applyTheme(savedTheme());
+updateThemeButton();
+onThemeChange(function(){
+  updateThemeButton();
+  renderDrivewayUI();
+  if (isProfileVisible()) drawProfile();
+});
+$('btn-toggle-theme').addEventListener('click', function(){
+  applyTheme(currentTheme() === 'light' ? 'dark' : 'light');
+});
+
 initThree();
+initLayout();
 restoreLastSettings();

@@ -7,10 +7,11 @@
 // so here matches checkpoint 2's own "delegate instead of duplicating"
 // pattern and removes a drift risk between the tested pure function and
 // the app's copy of the same maths.
+import { C } from './theme.ts';
 import { $ } from './dom.ts';
 import { state } from './state.ts';
 import { computeDrivewayProfileFrom, computeDrivewayComplianceFrom, computeKerbPvisFrom, computeLaybackPvisFrom } from './driveway/profile.ts';
-import { VEHICLE_TEMPLATES, sweepVehicleTemplateFrom, findWorstVehicleSweepFrom, vehicleSweepRangeFrom } from './driveway/vehicle.ts';
+import { VEHICLE_TEMPLATES, VEHICLE_DIMENSION_KEYS, effectiveVehicleTemplate, sweepVehicleTemplateFrom, findWorstVehicleSweepFrom, vehicleSweepRangeFrom } from './driveway/vehicle.ts';
 import { computeSectionTableFrom } from './driveway/sectionTable.ts';
 import { computeCutFillVolumeFrom } from './driveway/cutfill.ts';
 import { pointAtChainage as pointAtChainageLocal } from './geometry/chainage.ts';
@@ -88,10 +89,16 @@ export function drawVehicleOutlineSilhouette(ctx: CanvasRenderingContext2D, px: 
     f = f + b*template.wheelbase;
     a = -a; b = -b;
   }
+  // The outline is traced at the default wheelbase; stretch it lengthwise
+  // when the user has edited the wheelbase so the wheels stay on the
+  // template's own wheel-contact points.
+  var baseTemplate = VEHICLE_TEMPLATES[template.key];
+  var stretch = baseTemplate && baseTemplate.wheelbase > 0 ? template.wheelbase / baseTemplate.wheelbase : 1;
+  a *= stretch; b *= stretch;
   ctx.save();
   ctx.setTransform(a, b, c, d, e, f);
   ctx.globalAlpha = 0.4;
-  ctx.strokeStyle = '#AEB8BF';
+  ctx.strokeStyle = C.silhouette;
   ctx.lineJoin = 'round';
   ctx.lineWidth = 1.1 / Math.max(Math.abs(pxPerUnitX), 1e-6);
   var i: number, pts: number[][];
@@ -172,16 +179,21 @@ export function drivewayRules(): DrivewayRules {
     return isFinite(v) ? v : fallback;
   }
   return {
-    maxGrade: num('dw-max-grade', 20),
+    maxGrade: num('dw-max-grade', 25),
     applyBoundaryRule: $<HTMLInputElement>('dw-chk-boundary').checked,
     maxGradeBoundary: num('dw-max-grade-boundary', 5),
     transitionThreshold: num('dw-transition-threshold', 12.5),
-    minTransitionLength: num('dw-min-transition-length', 2)
+    transitionThresholdSag: num('dw-transition-threshold-sag', 15),
+    minTransitionLength: num('dw-min-transition-length', 2),
+    applyFootpathRule: $<HTMLInputElement>('dw-chk-footpath').checked,
+    footpathMaxGrade: num('dw-footpath-grade', 2.5),
+    footpathMinLength: num('dw-footpath-length', 1.0),
+    boundaryAtEnd: !!(state.rawAlignments[state.activeAlignmentIndex] && state.rawAlignments[state.activeAlignmentIndex].reversed)
   };
 }
 
-// Checks the design against the configured thresholds. This is a
-// screening aid against the commonly-cited AS 2890.1 numeric rules —
+// Checks the design against the configured thresholds (defaults from
+// AS/NZS 2890.1:2004 for domestic driveways). This is a screening aid —
 // NOT a substitute for checking the actual current clause text (the
 // standard is a paid Standards Australia document and gets amended)
 // or for a qualified engineer's sign-off before council submission.
@@ -261,15 +273,15 @@ function renderDrivewayCompliance(){
   var profile = computeDrivewayProfile();
   var rows = computeDrivewayCompliance(profile);
   if (profile && state.driveway.vehicleCheck.enabled){
-    var template = VEHICLE_TEMPLATES[state.driveway.vehicleCheck.model];
+    var template = activeVehicleTemplate();
     var flipped = state.driveway.vehicleCheck.flipped;
     var range = vehicleSweepRange(template, profile, flipped);
     var worst = findWorstVehicleSweepFrom(template, range.start, range.end,
       function(ch){ return driveGroundRLAt(profile, ch); }, 0.05, 0.02, flipped);
     if (worst){
       var mm = Math.round(Math.abs(worst.minClearance)*1000);
-      var approxNote = template.official ? '' : ' — approximate check, not an AS 2890.1 published template';
-      var directionNote = flipped ? ' reversing' : '';
+      var approxNote = template.customised ? ' — custom vehicle dimensions' : (template.official ? ' — AS/NZS 2890.1:2004 Figure C1 template' : ' — approximate check, not an AS 2890.1 published template');
+      var directionNote = (!!flipped !== activeAlignmentReversed()) ? ' reversing' : '';
       if (worst.scrapes){
         rows.push({cls:'diag-warn', text: template.label + directionNote + ' scrapes by ' + mm + 'mm near ch ' +
           worst.worstChainage.toFixed(2) + approxNote + '.'});
@@ -291,15 +303,56 @@ function updateVehicleReadout(profile: DrivewayProfile, template: VehicleTemplat
   var el = $('dw-vc-readout');
   if (!res){ el.textContent = 'Ground data unavailable at this position.'; el.style.color = ''; return; }
   var mm = Math.round(Math.abs(res.minClearance)*1000);
-  var approxNote = template.official ? '' : ' (approximate — no published AS 2890.1 template for ' + template.label + ')';
-  var directionNote = flipped ? ' reversing' : '';
+  var approxNote = template.customised ? ' (custom vehicle dimensions)' : (template.official ? ' (AS/NZS 2890.1:2004 Fig C1)' : ' (approximate — no published AS 2890.1 template for ' + template.label + ')');
+  var directionNote = (!!flipped !== activeAlignmentReversed()) ? ' reversing' : '';
   if (res.scrapes){
     el.textContent = template.label + directionNote + ' SCRAPES by ' + mm + 'mm (worst point at ch ' + res.worstChainage.toFixed(2) + ')' + approxNote + '.';
-    el.style.color = '#E0574A';
+    el.style.color = C.bad;
   } else {
     el.textContent = template.label + directionNote + ' clears by ' + mm + 'mm at its tightest point (ch ' + res.worstChainage.toFixed(2) + ')' + approxNote + '.';
-    el.style.color = '#3ECF8E';
+    el.style.color = C.ok;
   }
+}
+
+// `vehicleCheck.flipped` is stored in chart terms (true = vehicle faces
+// toward decreasing chainage). "Reversing" is about travel direction,
+// which assumes the road is at chainage 0 — on a reversed alignment the
+// road is at the far end, so a left-facing vehicle is driving forwards.
+function activeAlignmentReversed(): boolean {
+  var a = state.rawAlignments[state.activeAlignmentIndex];
+  return !!(a && a.reversed);
+}
+
+// The active design's vehicle template, with any per-model dimension
+// overrides the user has entered (vehicleCheck.dims) applied.
+export function activeVehicleTemplate(): VehicleTemplate {
+  var vc = state.driveway.vehicleCheck;
+  return effectiveVehicleTemplate(vc.model, vc.dims ? vc.dims[vc.model] : null);
+}
+
+// Vehicle-dimension inputs: lengths in metres, clearance shown in mm,
+// angles in degrees. Each input's placeholder shows the default.
+var VC_DIM_INPUTS: Record<string, {id: string; scale: number; digits: number}> = {
+  wheelbase: {id:'dw-vc-dim-wheelbase', scale:1, digits:3},
+  frontOverhang: {id:'dw-vc-dim-front', scale:1, digits:3},
+  rearOverhang: {id:'dw-vc-dim-rear', scale:1, digits:3},
+  clearance: {id:'dw-vc-dim-clearance', scale:1000, digits:0},
+  frontRampAngleDeg: {id:'dw-vc-dim-approach', scale:1, digits:1},
+  rampAngleDeg: {id:'dw-vc-dim-departure', scale:1, digits:1}
+};
+function renderVehicleDimsUI(){
+  var t = activeVehicleTemplate();
+  var base = VEHICLE_TEMPLATES[state.driveway.vehicleCheck.model] || VEHICLE_TEMPLATES.b99;
+  for (var i=0;i<VEHICLE_DIMENSION_KEYS.length;i++){
+    var k = VEHICLE_DIMENSION_KEYS[i], cfg = VC_DIM_INPUTS[k];
+    var el = $<HTMLInputElement>(cfg.id);
+    var defVal = (base[k] || 0) * cfg.scale;
+    el.placeholder = defVal.toFixed(cfg.digits);
+    if (document.activeElement !== el) el.value = ((t[k] || 0) * cfg.scale).toFixed(cfg.digits);
+  }
+  $('dw-vc-dims-status').textContent = t.customised
+    ? 'Custom dimensions in use for ' + t.label + ' on this design.'
+    : 'Default ' + t.label + ' dimensions.';
 }
 
 function renderVehicleCheckUI(){
@@ -308,8 +361,9 @@ function renderVehicleCheckUI(){
   $('dw-vc-body').style.display = vc.enabled ? 'block' : 'none';
   if (!vc.enabled) return;
   $<HTMLSelectElement>('dw-vc-model').value = vc.model;
-  $<HTMLInputElement>('dw-vc-flip').checked = !!vc.flipped;
+  $<HTMLInputElement>('dw-vc-flip').checked = !!vc.flipped !== activeAlignmentReversed();
   $('dw-vc-lead-label').textContent = vc.flipped ? 'front' : 'rear';
+  renderVehicleDimsUI();
   var profile = computeDrivewayProfile();
   var slider = $<HTMLInputElement>('dw-vc-slider');
   if (!profile){
@@ -320,7 +374,7 @@ function renderVehicleCheckUI(){
     return;
   }
   slider.disabled = false;
-  var template = VEHICLE_TEMPLATES[vc.model];
+  var template = activeVehicleTemplate();
   var range = vehicleSweepRange(template, profile, vc.flipped);
   slider.min = range.start.toFixed(3);
   slider.max = range.end.toFixed(3);
@@ -406,11 +460,34 @@ $('dw-vc-model').addEventListener('change', function(this: HTMLSelectElement){
   if (isProfileVisible()) drawProfile();
 });
 $('dw-vc-flip').addEventListener('change', function(this: HTMLInputElement){
-  state.driveway.vehicleCheck.flipped = this.checked;
+  state.driveway.vehicleCheck.flipped = this.checked !== activeAlignmentReversed();
   // The valid sweep range and its worst point both shift with which
   // overhang leads, so re-find the worst point rather than keeping the
   // old sweepChainage, same as switching model does.
   state.driveway.vehicleCheck.sweepChainage = null;
+  renderVehicleCheckUI();
+  renderDrivewayCompliance();
+  if (isProfileVisible()) drawProfile();
+});
+Object.keys(VC_DIM_INPUTS).forEach(function(key){
+  var cfg = VC_DIM_INPUTS[key];
+  $(cfg.id).addEventListener('change', function(this: HTMLInputElement){
+    var vc = state.driveway.vehicleCheck;
+    var raw = parseFloat(this.value);
+    if (!vc.dims) vc.dims = {};
+    if (!vc.dims[vc.model]) vc.dims[vc.model] = {};
+    var dims = vc.dims[vc.model] as Record<string, number>;
+    if (isFinite(raw)) dims[key] = raw / cfg.scale; else delete dims[key];
+    vc.sweepChainage = null; // the worst point moves with the shape
+    renderVehicleCheckUI();
+    renderDrivewayCompliance();
+    if (isProfileVisible()) drawProfile();
+  });
+});
+$('dw-vc-dims-reset').addEventListener('click', function(){
+  var vc = state.driveway.vehicleCheck;
+  if (vc.dims) delete vc.dims[vc.model];
+  vc.sweepChainage = null;
   renderVehicleCheckUI();
   renderDrivewayCompliance();
   if (isProfileVisible()) drawProfile();
@@ -421,13 +498,13 @@ $('dw-vc-slider').addEventListener('input', function(this: HTMLInputElement){
   state.driveway.vehicleCheck.sweepChainage = v;
   $('dw-vc-chainage-label').textContent = v.toFixed(2) + 'm';
   var profile = computeDrivewayProfile();
-  if (profile) updateVehicleReadout(profile, VEHICLE_TEMPLATES[state.driveway.vehicleCheck.model], v, state.driveway.vehicleCheck.flipped);
+  if (profile) updateVehicleReadout(profile, activeVehicleTemplate(), v, state.driveway.vehicleCheck.flipped);
   if (isProfileVisible()) drawProfile();
 });
 $('dw-vc-jump-worst').addEventListener('click', function(){
   var profile = computeDrivewayProfile();
   if (!profile) return;
-  var template = VEHICLE_TEMPLATES[state.driveway.vehicleCheck.model];
+  var template = activeVehicleTemplate();
   var flipped = state.driveway.vehicleCheck.flipped;
   var range = vehicleSweepRange(template, profile, flipped);
   var worst = findWorstVehicleSweepFrom(template, range.start, range.end,
@@ -571,7 +648,7 @@ $('dw-add-point').addEventListener('click', function(){
   renderDrivewayUI();
   if (isProfileVisible()) drawProfile();
 });
-['dw-max-grade','dw-chk-boundary','dw-max-grade-boundary','dw-transition-threshold','dw-min-transition-length'].forEach(function(id){
+['dw-max-grade','dw-chk-boundary','dw-max-grade-boundary','dw-transition-threshold','dw-transition-threshold-sag','dw-min-transition-length','dw-chk-footpath','dw-footpath-grade','dw-footpath-length'].forEach(function(id){
   $(id).addEventListener('change', function(){
     renderDrivewayCompliance();
     if (isProfileVisible()) drawProfile();

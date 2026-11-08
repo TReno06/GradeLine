@@ -2,7 +2,7 @@
 // This module is now the single source of truth for this logic — both
 // the app (main.js) and the test suite import it directly, so there is
 // no longer a hand-mirrored copy to drift out of sync.
-import Delaunator from 'delaunator';
+import { triangulateCoords } from './constrain.ts';
 import type { Point3, Triangle, TriIndex, Barycentric, TriangleHit } from '../types.ts';
 
 export function barycentric(px: number, py: number, ax: number, ay: number, bx: number, by: number, cx: number, cy: number): Barycentric | null {
@@ -84,13 +84,23 @@ export function triangleIndexAt(x: number, y: number, points: Point3[], triangle
 }
 
 export function triangulate(points: Point3[]): Triangle[] {
+  return triangulateConstrained(points, null).triangles;
+}
+
+// Same as triangulate(), optionally forcing breakline edges in (pairs of
+// indices into `points`, see geometry/breaklines.ts). `failed` counts the
+// edges that couldn't be (see geometry/constrain.ts).
+export function triangulateConstrained(points: Point3[], edges: ArrayLike<number> | null): { triangles: Triangle[]; failed: number } {
   var n = points.length;
-  if (n < 3) return [];
-  var d = Delaunator.from(points, function(p: Point3){ return p.x; }, function(p: Point3){ return p.y; });
-  var tris = d.triangles;
-  var result: Triangle[] = new Array(tris.length/3);
-  for (var i=0, t=0; i<tris.length; i+=3, t++){
-    result[t] = [tris[i], tris[i+1], tris[i+2]];
-  }
+  if (n < 3) return {triangles: [], failed: 0};
+  var coords = new Float64Array(n*2);
+  for (var i=0;i<n;i++){ coords[2*i] = points[i].x; coords[2*i+1] = points[i].y; }
+  var r = triangulateCoords(coords, edges);
+  return {triangles: trianglesFromFlat(r.triangles), failed: r.failed};
+}
+
+export function trianglesFromFlat(tris: ArrayLike<number>): Triangle[] {
+  var result: Triangle[] = new Array(Math.floor(tris.length/3));
+  for (var i=0, t=0; i+2<tris.length; i+=3, t++) result[t] = [tris[i], tris[i+1], tris[i+2]];
   return result;
 }

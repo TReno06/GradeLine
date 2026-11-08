@@ -73,6 +73,7 @@ export function serializeProject(appState: AppState, domSettings: ProjectDomSett
     formatVersion: 1,
     savedAt: new Date().toISOString(),
     rawPoints: appState.rawPoints || [],
+    rawBreaklines: appState.rawBreaklines || [],
     rawAlignments: appState.rawAlignments,
     activeAlignmentIndex: appState.activeAlignmentIndex,
     activePointLayers: serializeActiveLayers(appState.activePointLayers),
@@ -95,6 +96,8 @@ export function serializeProject(appState: AppState, domSettings: ProjectDomSett
 // directly.
 export function applyProjectData(project: ProjectFile): ProjectDomSettings {
   state.rawPoints = project.rawPoints;
+  // Older files have no breaklines field — they load with none.
+  state.rawBreaklines = project.rawBreaklines && project.rawBreaklines.length ? project.rawBreaklines : null;
   state.rawAlignments = project.rawAlignments;
   state.activeAlignmentIndex = project.activeAlignmentIndex;
   state.activePointLayers = deserializeActiveLayers(project.activePointLayers);

@@ -82,6 +82,89 @@ export function chainageOfClosestPoint(verts: Point2[], cum: number[], pt: Point
   return {chainage: bestChainage, offset: bestDist2===Infinity ? 0 : Math.sqrt(bestDist2)};
 }
 
+// Unit direction of travel along a polyline at chainage ch. On a gently
+// turning polyline (a tessellated curve, each vertex turning less than
+// SMOOTH_TURN_DEG) the direction turns smoothly along each segment, from
+// the averaged direction at one vertex to the next — so a line drawn
+// square to it sweeps round a curve like a true radius instead of jumping
+// at every vertex. A sharper vertex is a real corner: the direction stays
+// each segment's own on either side, and exactly on the corner it's the
+// average of the two (the bisector).
+var SMOOTH_TURN_DEG = 15;
+export function tangentAtChainage(verts: Point2[], cum: number[], ch: number): Point2 | null {
+  if (verts.length < 2) return null;
+  function dir(i: number): Point2 | null {
+    if (i < 0 || i >= verts.length - 1) return null;
+    var dx = verts[i+1].x - verts[i].x, dy = verts[i+1].y - verts[i].y, m = Math.hypot(dx, dy);
+    return m > 1e-12 ? {x: dx/m, y: dy/m} : null;
+  }
+  function avg(p: Point2, q: Point2): Point2 | null {
+    var sx = p.x + q.x, sy = p.y + q.y, sm = Math.hypot(sx, sy);
+    return sm > 1e-12 ? {x: sx/sm, y: sy/sm} : null;
+  }
+  var cosLimit = Math.cos(SMOOTH_TURN_DEG * Math.PI / 180);
+  // Direction to blend from/to at vertex v, as seen from segment seg.
+  function atVertex(v: number, seg: number): Point2 | null {
+    var own = dir(seg), other = dir(v === seg ? seg - 1 : seg + 1);
+    if (!own) return other;
+    if (!other || own.x*other.x + own.y*other.y < cosLimit) return own;
+    return avg(own, other) || own;
+  }
+  var seg = 0;
+  while (seg < cum.length-2 && cum[seg+1] < ch) seg++;
+  var d = dir(seg);
+  // Exactly on an interior vertex: the bisector (smooth or sharp alike).
+  var onVertex = seg > 0 && Math.abs(ch - cum[seg]) < 1e-6 ? seg
+    : (seg < cum.length-2 && Math.abs(ch - cum[seg+1]) < 1e-6 ? seg + 1 : -1);
+  if (onVertex >= 0){
+    var p = dir(onVertex - 1), q = dir(onVertex);
+    return (p && q && avg(p, q)) || q || p;
+  }
+  if (!d) return dir(seg - 1) || dir(seg + 1);
+  var t0 = atVertex(seg, seg) || d, t1 = atVertex(seg + 1, seg) || d;
+  var len = cum[seg+1] - cum[seg];
+  var f = len > 1e-12 ? Math.max(0, Math.min(1, (ch - cum[seg]) / len)) : 0;
+  var bx = t0.x + (t1.x - t0.x) * f, by = t0.y + (t1.y - t0.y) * f, bm = Math.hypot(bx, by);
+  return bm > 1e-12 ? {x: bx/bm, y: by/bm} : d;
+}
+
+// Crossfall's "perpendicular" comparison (2026-11-08, owner's request:
+// crossfall should be read square to the alignments). From the point at
+// chainage chA on alignment A, a line is drawn square to A (both ways)
+// and the nearest place it crosses alignment B is returned: B's chainage
+// there, and the distance across (offset). This is what a crossfall
+// check across a driveway means — on a bend the inside edge is shorter,
+// so the same chainage value on each edge is NOT the same place across
+// the driveway. If the square line misses B altogether (past B's ends),
+// falls back to the nearest point on B (chainageOfClosestPoint, the
+// method this replaced).
+export function chainageSquareAcross(vertsA: Point2[], cumA: number[], chA: number, vertsB: Point2[], cumB: number[]): {chainage: number; offset: number} {
+  var total = cumA[cumA.length-1];
+  var c = Math.max(0, Math.min(chA, total));
+  var p = pointAtChainage(vertsA, cumA, c);
+  var t = tangentAtChainage(vertsA, cumA, c);
+  if (!t) return chainageOfClosestPoint(vertsB, cumB, p);
+  var nx = -t.y, ny = t.x;
+  var best = Infinity, bestCh = 0;
+  for (var i=0; i<vertsB.length-1; i++){
+    var a = vertsB[i], b = vertsB[i+1];
+    var ex = b.x - a.x, ey = b.y - a.y;
+    // p + s*n = a + u*e
+    var det = -nx*ey + ex*ny;
+    if (Math.abs(det) < 1e-12) continue;
+    var rx = a.x - p.x, ry = a.y - p.y;
+    var s = (-rx*ey + ex*ry) / det;
+    var u = (nx*ry - ny*rx) / det;
+    if (u < -1e-9 || u > 1 + 1e-9) continue;
+    if (Math.abs(s) < best){
+      best = Math.abs(s);
+      bestCh = cumB[i] + Math.max(0, Math.min(1, u)) * (cumB[i+1] - cumB[i]);
+    }
+  }
+  if (best === Infinity) return chainageOfClosestPoint(vertsB, cumB, p);
+  return {chainage: bestCh, offset: best};
+}
+
 export function pointAtChainage(verts: Point2[], cum: number[], ch: number): Point2 {
     var segIdx = 0;
     while (segIdx < cum.length-2 && cum[segIdx+1] < ch) segIdx++;

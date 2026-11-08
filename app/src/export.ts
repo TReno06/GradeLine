@@ -7,7 +7,7 @@
 // the original single function computed them in — no formula changed,
 // only where each block of pushes lives.
 import { $ } from './dom.ts';
-import { state, toWorld, currentAlignmentLabel, drivewayStateFor } from './state.ts';
+import { state, toWorld, currentAlignmentLabel, drivewayStateFor, activeAlignmentFileName } from './state.ts';
 import {
   profileData, computeGradeBreaks, computeIntervalMarks, datumRLValue,
   centeredVertsForAlignment, cumulativeChainages, existingElevationAtChainageForVerts
@@ -22,7 +22,7 @@ import {
   computeCrossfallTableFrom
 } from './driveway/sectionTable.ts';
 import { computeCrossfallSeriesFrom, computeCrossfallSeriesPerpendicular } from './crossfall.ts';
-import { pointAtChainage, chainageOfClosestPoint } from './geometry/chainage.ts';
+import { pointAtChainage, chainageSquareAcross } from './geometry/chainage.ts';
 import type { ProfileSample, GradeBreak, DrivewayProfile, SectionTable, DecodedPngImage, DeclutterLabelInput, CrossfallTable, GroundRLAt, FileSystemFileHandleLike } from './types.ts';
 
 type ExportMode = 'existing' | 'proposed' | 'both';
@@ -189,7 +189,7 @@ export function exportLongSectionCSV(){
     var s = profileData.samples[i];
     lines.push(s.chainage.toFixed(3) + ',' + (s.elevation===null ? '' : s.elevation.toFixed(3)));
   }
-  saveFile('long-section.csv', lines.join('\n'));
+  saveFile(activeAlignmentFileName('existing') + '.csv', lines.join('\n'));
 }
 
 // Minimal but valid ASCII DXF: one SECTION/ENTITIES block + EOF, no
@@ -689,7 +689,8 @@ export function exportSectionDXF(mode?: ExportMode){
 
   buildSectionTableLines(lines, breaks, dwProfileForTable, elMin, elMax, tickBottom);
 
-  var fileBase = 'long-section' + (mode === 'both' ? '' : '-' + mode);
+  // "Alignment N Existing/Proposed/Both" — whichever button was used.
+  var fileBase = activeAlignmentFileName(mode);
   saveDXF(fileBase, dxfWrap(lines));
 }
 
@@ -864,8 +865,7 @@ export function exportCrossfallDXF(mode?: ExportMode){
   // each doing its own setup rather than a shared "model" object.
   var perpendicular = state.crossfall.projectionMode === 'perpendicular';
   function projectAtoB(chA: number): number {
-    var ptA = pointAtChainage(vertsA, cumA, Math.max(0, Math.min(chA, totalA)));
-    return chainageOfClosestPoint(vertsB, cumB, ptA).chainage;
+    return chainageSquareAcross(vertsA, cumA, Math.max(0, Math.min(chA, totalA)), vertsB, cumB).chainage;
   }
   var groundOnlyB = perpendicular ? function(chA: number){ return groundOnlyBRaw(projectAtoB(chA)); } : groundOnlyBRaw;
   var designOrGroundB = perpendicular ? function(chA: number){ return designOrGroundBRaw(projectAtoB(chA)); } : designOrGroundBRaw;

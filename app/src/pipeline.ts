@@ -1,17 +1,21 @@
 // Pipeline: recompute everything after data changes — PLAN.md Stage 2
 // checkpoint 3 port, extracted verbatim from main.js.
 import { $, escapeHtml } from './dom.ts';
-import { state, drivewayStateFor } from './state.ts';
+import { state, drivewayStateFor, alignmentNumberName } from './state.ts';
 import { buildTriIndex } from './geometry/tin.ts';
+import { prepareConstrainedInput } from './geometry/breaklines.ts';
 import { triangulateAsync, cancelTriangulation } from './triangulation.ts';
-import { setTriIndex, clearTriIndex, resetProfileView, recomputeProfileData, setProfileData, profileData } from './longsection.ts';
+import { setTriIndex, clearTriIndex, resetProfileView, recomputeProfileData, setProfileData, profileData, cumulativeChainages } from './longsection.ts';
+import { mirrorDrivewayState } from './driveway/reverse.ts';
 import { rampCSSGradient } from './colorramp.ts';
 import { three, clearGroup, rebuildTerrainMesh, hidePointInspector } from './view3d.ts';
 import { runDiagnostics } from './diagnostics.ts';
 import { drawProfile } from './rendering.ts';
 import { is3DVisible, isProfileVisible } from './viewstate.ts';
 import { renderDrivewayUI } from './driveway.ts';
-import type { Point3, Point2, Triangle } from './types.ts';
+import { describeOffsite, computeLayerBreakdown } from './dxf.ts';
+import { buildSampleSite } from './sample.ts';
+import type { Point3, Point2, Triangle, Breakline } from './types.ts';
 
 interface CancelledError extends Error { cancelled?: boolean; }
 
@@ -27,7 +31,16 @@ var rebuildGeneration = 0;
 // rebuildAll() reuses these triangles instead of re-triangulating, and
 // skips re-running diagnostics (which depend only on points+triangles).
 // Compared coordinate-by-coordinate, never hashed, so a match is exact.
-var lastSurface: { coords: Float64Array; triangles: Triangle[] } | null = null;
+// Breakline edges are part of the match too (2026-11-08): the same points
+// with breaklines toggled give a different surface.
+var lastSurface: { coords: Float64Array; edges: number[] | null; triangles: Triangle[]; failed: number } | null = null;
+
+function sameEdges(a: number[] | null, b: number[] | null): boolean {
+  var la = a ? a.length : 0, lb = b ? b.length : 0;
+  if (la !== lb) return false;
+  for (var i=0;i<la;i++) if (a[i] !== b[i]) return false;
+  return true;
+}
 
 function flattenPoints(points: Point3[]): Float64Array {
   var out = new Float64Array(points.length * 3);
@@ -56,22 +69,27 @@ export function rebuildAll(){
   if (!state.points.length) return;
   var myGeneration = ++rebuildGeneration;
   var coords = flattenPoints(state.points);
+  var edges = state.constraintEdges;
 
   $('empty-state').style.display = 'none';
-  if (lastSurface && sameCoords(coords, lastSurface.coords)){
+  if (lastSurface && sameCoords(coords, lastSurface.coords) && sameEdges(edges, lastSurface.edges)){
     // Supersedes any in-flight triangulation too, via the generation bump above.
     $('triangulating-overlay').style.display = 'none';
+    if (state.breaklineStats) state.breaklineStats.failed = lastSurface.failed;
+    renderBreaklineNotice();
     finishRebuildAll(lastSurface.triangles, true);
     return;
   }
   $('triangulating-count').textContent = String(state.points.length);
   $('triangulating-overlay').style.display = 'flex';
 
-  triangulateAsync(state.points).then(function(triangles){
+  triangulateAsync(state.points, edges).then(function(result){
     if (myGeneration !== rebuildGeneration) return; // superseded — discard
     $('triangulating-overlay').style.display = 'none';
-    lastSurface = {coords: coords, triangles: triangles};
-    finishRebuildAll(triangles, false);
+    lastSurface = {coords: coords, edges: edges, triangles: result.triangles, failed: result.failed};
+    if (state.breaklineStats) state.breaklineStats.failed = result.failed;
+    renderBreaklineNotice();
+    finishRebuildAll(result.triangles, false);
   }, function(err: CancelledError){
     if (myGeneration !== rebuildGeneration) return;
     $('triangulating-overlay').style.display = 'none';
@@ -199,8 +217,49 @@ function filterByLayer(pts: Point3[]): Point3[] {
   return pts.filter(function(p){ return (state.activePointLayers as Set<string>).has(p.layer || '0'); });
 }
 
-export function setRawDataAndBuild(rawPoints: Point3[]): boolean {
+// Breaklines on the ticked layers (the same checklist as the points),
+// when "Use breaklines" is on, with the same Z=0 / coordinate-limit
+// filters applied per vertex — a string is cut where a vertex fails one,
+// so a single bad vertex never drags a segment to RL 0. Copies, so
+// centering never touches state.rawBreaklines.
+function activeBreaklines(): Breakline[] {
+  var raw = state.rawBreaklines;
+  if (!raw || !raw.length || !$<HTMLInputElement>('chk-breaklines').checked) return [];
+  var ignoreZero = $<HTMLInputElement>('chk-ignore-zero').checked;
+  var limit = $<HTMLInputElement>('chk-ignore-far').checked ? parseFloat($<HTMLInputElement>('far-limit').value) : NaN;
+  var useLimit = !isNaN(limit) && limit > 0;
+  var out: Breakline[] = [];
+  for (var i=0;i<raw.length;i++){
+    var bl = raw[i];
+    var layer = bl.layer || '0';
+    if (state.activePointLayers && !state.activePointLayers.has(layer)) continue;
+    var run: Point3[] = [];
+    for (var v=0; v<=bl.vertices.length; v++){
+      var p = bl.vertices[v];
+      var ok = !!p && !(ignoreZero && p.z === 0) && !(useLimit && (Math.abs(p.x) > limit || Math.abs(p.y) > limit));
+      if (ok){ run.push({x:p.x, y:p.y, z:p.z, layer:layer}); continue; }
+      if (run.length >= 2) out.push({layer: layer, vertices: run});
+      run = [];
+    }
+  }
+  return out;
+}
+
+export function renderBreaklineNotice(){
+  var el = $('breakline-notice');
+  var s = state.breaklineStats;
+  if (!s){ el.style.display = 'none'; el.textContent = ''; return; }
+  var forced = s.segments - s.failed;
+  var msg = 'Breaklines: ' + forced + ' segment' + (forced===1?'':'s') + ' built into the surface.';
+  if (s.skippedCrossing) msg += ' ' + s.skippedCrossing + ' skipped because they cross another breakline.';
+  if (s.failed) msg += ' ' + s.failed + ' couldn’t be fitted (overlapping or degenerate linework).';
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+export function setRawDataAndBuild(rawPoints: Point3[], rawBreaklines?: Breakline[] | null): boolean {
   state.rawPoints = rawPoints;
+  state.rawBreaklines = rawBreaklines && rawBreaklines.length ? rawBreaklines : null;
   return rebuildFromRaw();
 }
 
@@ -226,6 +285,17 @@ export function rebuildFromRaw(): boolean {
   var activeAlign = (state.activeAlignmentIndex >= 0 && state.rawAlignments[state.activeAlignmentIndex])
     ? state.rawAlignments[state.activeAlignmentIndex] : null;
   var poly = activeAlign ? activeAlign.vertices.map(function(v){ return {x:v.x, y:v.y}; }) : null;
+  var bls = activeBreaklines();
+  if (bls.length){
+    var prep = prepareConstrainedInput(pts, bls);
+    pts = prep.points;
+    state.constraintEdges = prep.edges.length ? prep.edges : null;
+    state.breaklineStats = {segments: prep.segments, skippedCrossing: prep.skippedCrossing, failed: 0};
+  } else {
+    state.constraintEdges = null;
+    state.breaklineStats = null;
+  }
+  renderBreaklineNotice();
   state.points = pts;
   state.polyline = poly;
   centerData(state.points, state.polyline);
@@ -255,9 +325,12 @@ export function renderLayerFilterUI(){
   for (var i=0;i<state.pointLayers.length;i++){
     var l = state.pointLayers[i];
     var checked = state.activePointLayers && state.activePointLayers.has(l.layer) ? 'checked' : '';
+    var countText = l.lines ? (l.count + ' + ' + l.lines + ' line' + (l.lines===1?'':'s')) : String(l.count);
     html += '<label class="checkrow layer-row"><input type="checkbox" class="layer-chk" data-layer="' +
       escapeHtml(l.layer) + '" ' + checked + '> ' + escapeHtml(l.layer) +
-      '<span class="layer-count">(' + l.count + ')</span></label>';
+      '<span class="layer-count">(' + countText + ')</span>' +
+      (l.offsite ? '<span class="layer-offsite">⚠ ' + escapeHtml(describeOffsite(l.offsite)) + ' of the rest — check position</span>' : '') +
+      '</label>';
   }
   container.innerHTML = html;
   var boxes = container.querySelectorAll<HTMLInputElement>('.layer-chk');
@@ -283,10 +356,38 @@ export function renderAlignmentSelector(){
   var html = '';
   for (var i=0;i<state.rawAlignments.length;i++){
     html += '<option value="' + i + '"' + (i===state.activeAlignmentIndex?' selected':'') + '>' +
-      escapeHtml(state.rawAlignments[i].label) + '</option>';
+      escapeHtml(alignmentDisplayName(i)) + '</option>';
   }
   sel.innerHTML = html;
   renderCrossfallUI();
+}
+
+export function alignmentDisplayName(i: number): string {
+  var a = state.rawAlignments[i];
+  if (!a) return alignmentNumberName(i);
+  return alignmentNumberName(i) + ' — ' + a.label + (a.reversed ? ' (reversed)' : '');
+}
+
+// Flips an alignment's direction so its long section reads the other
+// way. The stored vertices themselves are reversed (so every consumer —
+// long section, 3D line, crossfall, exports, saved job — sees the new
+// direction without knowing about it), and that alignment's driveway
+// design is mirrored onto the new chainages so it stays on the same
+// physical ground (driveway/reverse.ts).
+export function reverseAlignment(idx: number){
+  var a = state.rawAlignments[idx];
+  if (!a || a.vertices.length < 2) return;
+  var cum = cumulativeChainages(a.vertices);
+  var total = cum[cum.length-1];
+  a.vertices.reverse();
+  a.reversed = !a.reversed;
+  var key = String(idx);
+  if (state.drivewayByAlignment[key]) state.drivewayByAlignment[key] = mirrorDrivewayState(state.drivewayByAlignment[key], total);
+  state.driveway = drivewayStateFor(state.activeAlignmentIndex);
+  state.crossfall.markerChainage = null;
+  renderAlignmentSelector();
+  if (state.rawPoints && state.rawPoints.length) rebuildFromRaw();
+  renderDrivewayUI();
 }
 
 // The crossfall view compares two alignments, each with its own fully
@@ -313,7 +414,7 @@ export function renderCrossfallUI(){
     var html = '';
     for (var i=0;i<aligns.length;i++){
       html += '<option value="' + i + '"' + (i===selectedIdx?' selected':'') + '>' +
-        escapeHtml(aligns[i].label) + '</option>';
+        escapeHtml(alignmentDisplayName(i)) + '</option>';
     }
     return html;
   }
@@ -340,6 +441,10 @@ export function clearAllData(){
   state.triangles = [];
   state.polyline = null;
   state.rawPoints = null;
+  state.rawBreaklines = null;
+  state.constraintEdges = null;
+  state.breaklineStats = null;
+  renderBreaklineNotice();
   state.pointLayers = null;
   state.activePointLayers = null;
   state.rawAlignments = [];
@@ -354,6 +459,7 @@ export function clearAllData(){
   clearGroup(three.terrainMesh); three.terrainMesh = null;
   clearGroup(three.wireMesh); three.wireMesh = null;
   clearGroup(three.pointsMesh); three.pointsMesh = null;
+  clearGroup(three.breaklineMesh); three.breaklineMesh = null;
   clearGroup(three.alignmentLine); three.alignmentLine = null;
   hidePointInspector();
 
@@ -383,33 +489,41 @@ export function clearAllData(){
 // ============================================================
 // Sample data generator
 // ============================================================
+// A made-up residential driveway job (sample.ts): street, kerb and gutter
+// with breaklines and a layback, footpath, a sloping lot and a garage slab,
+// with an alignment up each edge of the proposed driveway, each carrying a
+// passing design — so the Crossfall tab has two designs to compare.
 export function loadSampleData(){
-  var pts: Point3[] = [];
-  var n = 34;
-  for (var i=0;i<n;i++){
-    for (var j=0;j<n;j++){
-      var x = i*8 + (Math.sin(i*3.1+j)*1.2);
-      var y = j*8 + (Math.cos(j*2.3+i)*1.2);
-      var z = 22
-        + 5.5*Math.sin(x*0.045)*Math.cos(y*0.035)
-        + 3.0*Math.sin(x*0.02 + y*0.015)
-        + (Math.abs(x-132)<28 && Math.abs(y-132)<10 ? -3.2 : 0); // a shallow valley/road cut
-      pts.push({x:x, y:y, z:z});
-    }
-  }
-  var poly = [
-    {x: -6, y: 20},
-    {x: 60, y: 55},
-    {x: 130, y: 130},
-    {x: 200, y: 150},
-    {x: 262, y: 240}
-  ];
+  var site = buildSampleSite();
   resetPointLayerFilter();
-  state.rawAlignments = [{label:'sample-alignment', layer:null, vertices:poly}];
+  state.rawAlignments = site.alignments.map(function(a){ return {label:a.label, layer:'ALIGNMENT', vertices:a.vertices}; });
+  state.drivewayByAlignment = {};
+  site.alignments.forEach(function(a, i){
+    var dw = drivewayStateFor(i);
+    dw.enabled = true;
+    dw.pvis = a.design.pvis.map(function(p){ return {chainage:p.chainage, rl:p.rl, template:p.template}; });
+    dw.kerbInvert = {chainage: a.design.kerbChainage, rl: a.design.kerbInvertRl};
+    dw.frontier = {chainage: a.design.kerbChainage, rl: a.design.kerbInvertRl + a.design.revealMm/1000};
+    dw.vehicleCheck.enabled = true;
+    dw.cutFillCorridorWidth = 1.5; // half the 3m driveway each side
+  });
   state.activeAlignmentIndex = 0;
-  state.driveway = drivewayStateFor(state.activeAlignmentIndex);
+  state.driveway = drivewayStateFor(0);
+  state.crossfall.alignA = 0;
+  state.crossfall.alignB = 1;
+  state.crossfall.markerChainage = null;
+  state.crossfall.projectionMode = 'perpendicular';
+  var first = site.alignments[0].design;
+  $<HTMLInputElement>('dw-kerb-invert-chainage').value = first.kerbChainage.toFixed(2);
+  $<HTMLInputElement>('dw-kerb-invert-rl').value = first.kerbInvertRl.toFixed(3);
+  $<HTMLInputElement>('dw-kerb-reveal').value = String(first.revealMm);
+  var anchors = site.alignments.flatMap(function(a){ return a.vertices; });
+  state.pointLayers = computeLayerBreakdown(site.points, site.breaklines, anchors);
+  state.activePointLayers = new Set(state.pointLayers.map(function(l){ return l.layer; }));
+  renderLayerFilterUI();
   renderAlignmentSelector();
-  setRawDataAndBuild(pts);
-  $('dxf-filename').textContent = 'sample-terrain.dxf';
+  setRawDataAndBuild(site.points, site.breaklines);
+  renderDrivewayUI();
+  $('dxf-filename').textContent = 'sample-driveway.dxf';
   $('dxf-filename').classList.add('loaded');
 }

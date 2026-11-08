@@ -14,7 +14,7 @@
 // as a cross-slope percentage rather than just a raw level difference.
 // Chainages where either side has no data are skipped rather than
 // producing a bogus zero-crossfall point.
-import { pointAtChainage, chainageOfClosestPoint } from './geometry/chainage.ts';
+import { chainageSquareAcross } from './geometry/chainage.ts';
 import type { GroundRLAt, WidthAt, CrossfallSeriesPoint, Point2 } from './types.ts';
 
 export function computeCrossfallSeriesFrom(groundRLAtA: GroundRLAt, groundRLAtB: GroundRLAt, rangeStart: number, rangeEnd: number, step: number, widthAt: WidthAt | undefined): CrossfallSeriesPoint[] {
@@ -68,8 +68,7 @@ export function computeCrossfallSeriesPerpendicular(vertsA: Point2[], cumA: numb
     var chA = rangeStart + (rangeEnd - rangeStart) * i / n;
     var rlA = groundRLAtA(chA);
     if (rlA === null || rlA === undefined) continue;
-    var ptA = pointAtChainage(vertsA, cumA, chA);
-    var proj = chainageOfClosestPoint(vertsB, cumB, ptA);
+    var proj = chainageSquareAcross(vertsA, cumA, chA, vertsB, cumB);
     var rlB = groundRLAtB(proj.chainage);
     if (rlB === null || rlB === undefined) continue;
     var crossfall = rlB - rlA;

@@ -3,56 +3,93 @@
 // the app (main.js) and the test suite import it directly, so there is
 // no longer a hand-mirrored copy to drift out of sync.
 
-// Vehicle ground-clearance templates (AS 2890.1 Appendix D style): a rigid
-// underside shape checked against the ground profile at any longitudinal
-// "sweep" position, by resting two wheel-contact points on the ground and
-// rotating the whole rigid template to match the resulting chord — exactly
-// the physical method Appendix D itself specifies ("apply the template to
-// the longitudinal section plot so the two knife edges... sit on the
-// plot"). AS 2890.1's Appendix D (Figure D1, 1993 edition) publishes an
-// official B99 template (wheelbase 3.07m, 800mm front overhang, 1100mm
-// rear overhang) but is explicitly B99-only, so B85 has never had an
-// official equivalent. Both templates below instead use the same 2004
-// vehicle-dimension reference sheets Thom supplied for each (wheelbase/
-// overhang/min-clearance figures) — B85 always did; B99 was switched from
-// the Appendix D figures to match, by Thom's explicit choice (confirmed
-// 2026-09-19: these are what he uses day to day), not because Appendix D
-// is wrong. `official:true` on B99 reflects that AS 2890.1 does publish a
-// template for this vehicle class, not that these numbers are copied from
-// it. Neither 2004 sheet gives a rear flat lead-in, so both ramps start
-// right at the rear wheel.
+// Vehicle ground-clearance templates — AS/NZS 2890.1:2004 Appendix C,
+// Figure C1 (checked against the owner-supplied copy of the Standard,
+// 2026-11-08). A rigid underside shape checked against the ground profile
+// at any longitudinal "sweep" position, by resting the two wheel contact
+// points ("knife edges") on the profile and rotating the whole template to
+// match the resulting chord — the method Clause C2 specifies.
+//
+// Figure C1 gives both vehicles: (a) B99 "for use in all cases except
+// domestic driveways" and (b) B85 "for domestic driveways only". Lengths
+// are Figures B1/B2/C1 exactly (B99 3050 wheelbase / 950 front / 1200
+// rear; B85 2800 / 920 / 1190); ground clearance 120mm between the axles
+// (Paragraph B5). At each end the underside rises along a 10 degree line
+// drawn from the tyre contact point — the departure angle (B5(b)) at the
+// rear and the approach angle (B5 note: "adopted as 10 degrees") at the
+// front — so it stays at 120mm until that line passes it, about 0.68m out
+// from the axle, then rises to ~165mm at the front and ~210mm at the rear
+// extremity (B99). See templateUndersideLocal.
 import type { VehicleTemplate, GroundRLAt, VehicleSweepResult, VehicleSweepRange } from '../types.ts';
 
 export var VEHICLE_TEMPLATES: Record<string, VehicleTemplate> = {
   b99: {
     key: 'b99', label: 'B99', official: true,
     wheelbase: 3.050, frontOverhang: 0.950, rearOverhang: 1.200,
-    rearFlatLeadIn: 0, rampAngleDeg: 8, clearance: 0.120
+    rearFlatLeadIn: 0, rampAngleDeg: 10, frontRampAngleDeg: 10, clearance: 0.120
   },
   b85: {
-    key: 'b85', label: 'B85', official: false,
+    key: 'b85', label: 'B85', official: true,
     wheelbase: 2.800, frontOverhang: 0.920, rearOverhang: 1.190,
-    rearFlatLeadIn: 0, rampAngleDeg: 8, clearance: 0.120
+    rearFlatLeadIn: 0, rampAngleDeg: 10, frontRampAngleDeg: 10, clearance: 0.120
   }
 };
 
-// Local-frame underside height v(u) for a distance u (metres) measured
-// from the front wheel contact point, positive toward the rear. Flat
-// (v=0, the worst-case/no-clearance-margin baseline) from the front
-// extremity through both wheels and the rear's flat lead-in, then rises
-// at rampAngleDeg for the rest of the rear overhang. A completely flat,
-// level road grazes this baseline everywhere (clearance exactly 0, a
-// pass) — the check exists to catch a hump, dip or grade change that
-// pushes the actual ground above this line anywhere along it.
-// Height of the underside above the wheel-to-wheel chord line at local
-// position u. The flat sections sit at the vehicle's actual minimum
-// ground clearance throughout (not flush with the wheels) — that's what
-// "min ground clearance" means — and the rear ramp rises further above
-// that baseline.
+// History: until 2026-11-07 the front overhang was flat at the clearance
+// and the rear rose at 8 degrees from the clearance line (the 1993
+// edition's figure); 2026-11-07 added an 8 degree front ramp from the
+// clearance line after Thom found GradeLine stricter than AutoCAD Vehicle
+// Tracking. Both 8 degree ramps sat ABOVE the 2004 template at the
+// bumpers (~250/290mm vs ~165/210mm for B99) — i.e. more lenient — so
+// they were replaced by the Figure C1 shape on 2026-11-08. Every dimension
+// stays editable per design (effectiveVehicleTemplate) so Vehicle Tracking
+// figures can still be entered.
+
+// The editable dimensions, in the order the UI shows them.
+export var VEHICLE_DIMENSION_KEYS = ['wheelbase', 'frontOverhang', 'rearOverhang', 'clearance', 'frontRampAngleDeg', 'rampAngleDeg'] as const;
+export type VehicleDimensionKey = typeof VEHICLE_DIMENSION_KEYS[number];
+export type VehicleDimensionOverrides = Partial<Record<VehicleDimensionKey, number>>;
+
+// The built-in template for `model` with any user overrides applied.
+// Only finite, sensible values are taken (lengths > 0, clearance >= 0,
+// angles 0-45°); anything else falls back to the default. `official`
+// is cleared once any dimension differs from the default, so readouts
+// stop describing it as the standard template.
+export function effectiveVehicleTemplate(model: string, overrides?: VehicleDimensionOverrides | null): VehicleTemplate {
+  var base = VEHICLE_TEMPLATES[model] || VEHICLE_TEMPLATES.b99;
+  var t: VehicleTemplate = Object.assign({}, base);
+  if (!overrides) return t;
+  var customised = false;
+  for (var i=0;i<VEHICLE_DIMENSION_KEYS.length;i++){
+    var k = VEHICLE_DIMENSION_KEYS[i];
+    var v = overrides[k];
+    if (typeof v !== 'number' || !isFinite(v)) continue;
+    var ok = (k === 'clearance') ? v >= 0 && v < 2
+      : (k === 'frontRampAngleDeg' || k === 'rampAngleDeg') ? v >= 0 && v <= 45
+      : v > 0 && v < 20;
+    if (!ok) continue;
+    if (Math.abs(v - base[k]) > 1e-9) customised = true;
+    t[k] = v;
+  }
+  if (customised){ t.official = false; t.customised = true; }
+  return t;
+}
+
+// Height of the underside above the wheel-to-wheel chord at local
+// position u (metres from the front wheel contact, positive toward the
+// rear). Between the axles: the ground clearance. Beyond either axle: the
+// higher of the ground clearance and a line rising from that wheel's
+// contact point at the approach (front) or departure (rear) angle —
+// Figure C1's shape. An angle of 0 gives a flat overhang at the clearance.
+// A completely flat, level road clears this by exactly the clearance.
 export function templateUndersideLocal(template: VehicleTemplate, u: number): number {
+  if (u < 0){
+    var front = template.frontRampAngleDeg || 0;
+    return Math.max(template.clearance, (-u) * Math.tan(front * Math.PI/180));
+  }
   var rampStart = template.wheelbase + template.rearFlatLeadIn;
   if (u <= rampStart) return template.clearance;
-  return template.clearance + (u - rampStart) * Math.tan(template.rampAngleDeg * Math.PI/180);
+  return Math.max(template.clearance, (u - rampStart) * Math.tan(template.rampAngleDeg * Math.PI/180));
 }
 
 // Sweeps the rigid template so the wheel at chainage `sweepChainage`

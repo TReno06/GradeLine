@@ -5,8 +5,9 @@
 // only ever called from within this same area of main.js before the
 // port. (interpolatedSampleAt moved to geometry/chainage.ts so it can be
 // unit tested.)
+import { C } from './theme.ts';
 import { $, escapeHtml } from './dom.ts';
-import { state, drivewayStateFor } from './state.ts';
+import { state, drivewayStateFor, alignmentNumberName } from './state.ts';
 import { isCrossfallVisible, isProfileVisible, is3DVisible } from './viewstate.ts';
 import {
   profileData, profileView, resetProfileView, triIndex,
@@ -15,12 +16,12 @@ import {
 } from './longsection.ts';
 import {
   computeDrivewayProfile, computeDrivewayProfileForPvis, drivewayRules,
-  driveGroundRLAt, driveGroundRLAtForVerts, alignmentSeparationAt, drawVehicleOutlineSilhouette
+  driveGroundRLAt, driveGroundRLAtForVerts, alignmentSeparationAt, drawVehicleOutlineSilhouette, activeVehicleTemplate
 } from './driveway.ts';
 import { legGradeChecksFrom } from './driveway/profile.ts';
-import { VEHICLE_TEMPLATES, sweepVehicleTemplateFrom } from './driveway/vehicle.ts';
+import { sweepVehicleTemplateFrom } from './driveway/vehicle.ts';
 import { computeCrossfallSeriesFrom, computeCrossfallSeriesPerpendicular } from './crossfall.ts';
-import { pointAtChainage, chainageOfClosestPoint, interpolatedSampleAt } from './geometry/chainage.ts';
+import { pointAtChainage, chainageSquareAcross, interpolatedSampleAt } from './geometry/chainage.ts';
 import { showHoverMarker, hideHoverMarker } from './view3d.ts';
 import type { Point2, DrivewayProfile, VehicleTemplate, GradeBreak, IntervalMark } from './types.ts';
 
@@ -39,7 +40,7 @@ function drawCrossfallView(canvas: HTMLCanvasElement, ctx: CanvasRenderingContex
   var aligns = state.rawAlignments || [];
   var idxA = state.crossfall.alignA, idxB = state.crossfall.alignB;
   function fail(msg: string){
-    ctx.fillStyle = '#5B6870';
+    ctx.fillStyle = C.faint;
     ctx.font = '13px IBM Plex Sans';
     ctx.textAlign = 'center';
     ctx.fillText(msg, canvas.width/2, canvas.height/2);
@@ -66,6 +67,8 @@ function drawCrossfallView(canvas: HTMLCanvasElement, ctx: CanvasRenderingContex
     return;
   }
 
+  var nameA = alignmentNumberName(idxA), nameB = alignmentNumberName(idxB);
+  var captionA = nameA + ' (' + aligns[idxA].label + ')', captionB = nameB + ' (' + aligns[idxB].label + ')';
   var dwA = drivewayStateFor(idxA), dwB = drivewayStateFor(idxB);
   var profA = dwA.enabled ? computeDrivewayProfileForPvis(dwA.pvis) : null;
   var profB = dwB.enabled ? computeDrivewayProfileForPvis(dwB.pvis) : null;
@@ -85,12 +88,11 @@ function drawCrossfallView(canvas: HTMLCanvasElement, ctx: CanvasRenderingContex
   var assumptionEl = $('xf-assumption-text');
   if (assumptionEl){
     assumptionEl.textContent = perpendicular
-      ? 'Crossfall is read via PERPENDICULAR PROJECTION: for each point along Alignment A, the nearest point on Alignment B’s own line is found in real X/Y space (clamped to B’s own ends) and B’s level is read there. Meaningful even when the two alignments don’t run parallel or start at a comparable point — the trade-off is that B’s own chart panel is resampled onto A’s chainage axis rather than showing B’s raw profile.'
+      ? 'Crossfall is read SQUARE ACROSS from Alignment A: at each chainage on A, a line square to A is drawn across to Alignment B and B’s level is read where it crosses — the true fall across the driveway, even on a bend (where the inside edge is shorter, so matching chainage values compare the wrong places). Past B’s ends, the nearest point on B is used. B’s chart panel is resampled onto A’s chainage axis.'
       : 'Crossfall is read at MATCHING CHAINAGE VALUE along each alignment (chainage 10.00 on A vs chainage 10.00 on B) — not a true perpendicular projection between the two lines. Only meaningful when both alignments start at a comparable point and run roughly parallel over a similar length.';
   }
   function projectAtoB(chA: number): number {
-    var ptA = pointAtChainage(vertsA, cumA, Math.max(0, Math.min(chA, totalA)));
-    return chainageOfClosestPoint(vertsB, cumB, ptA).chainage;
+    return chainageSquareAcross(vertsA, cumA, Math.max(0, Math.min(chA, totalA)), vertsB, cumB).chainage;
   }
   // Every place B's own ground/design is read by "the chainage on A's
   // own axis" (both mini-profile panels share one x-axis — see chX
@@ -133,8 +135,8 @@ function drawCrossfallView(canvas: HTMLCanvasElement, ctx: CanvasRenderingContex
   // padT is deliberately generous (well past the 46px translucent
   // top toolbar that overlaps this canvas) since the first mini-
   // panel's label sits just above its own box, close to the canvas top.
-  var padL=64, padR=20, padT=58, gap=30;
-  var panelH = (canvas.height - padT - gap*2 - 16) / 3;
+  var padL=64, padR=20, padT=72, gap=30;
+  var panelH = (canvas.height - padT - gap*2 - 24) / 3;
   var plotW = canvas.width - padL - padR;
   function panelTop(i: number){ return padT + i*(panelH+gap); }
 
@@ -161,15 +163,15 @@ function drawCrossfallView(canvas: HTMLCanvasElement, ctx: CanvasRenderingContex
     }
     var vals: number[] = [];
     samples.forEach(function(s){ if (s.ground!==null) vals.push(s.ground); if (s.design!==null) vals.push(s.design); });
-    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+    ctx.strokeStyle = C.panelBorder;
     ctx.lineWidth = 1;
     ctx.strokeRect(padL, top, plotW, panelH);
-    ctx.fillStyle = '#8A97A0';
+    ctx.fillStyle = C.panelLabel;
     ctx.font = '11px IBM Plex Mono';
     ctx.textAlign = 'left';
     ctx.fillText(label, padL, top-7);
     if (!vals.length){
-      ctx.fillStyle = '#5B6870';
+      ctx.fillStyle = C.faint;
       ctx.font = '11px IBM Plex Sans';
       ctx.textAlign = 'center';
       ctx.fillText('No surveyed ground under this alignment.', padL+plotW/2, top+panelH/2);
@@ -192,7 +194,7 @@ function drawCrossfallView(canvas: HTMLCanvasElement, ctx: CanvasRenderingContex
       var x=xx(s.ch), y=yy(s.ground);
       if (!started){ ctx.moveTo(x,y); started=true; } else ctx.lineTo(x,y);
     });
-    ctx.strokeStyle = 'rgba(180,190,196,0.75)';
+    ctx.strokeStyle = C.miniGround;
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
@@ -204,7 +206,7 @@ function drawCrossfallView(canvas: HTMLCanvasElement, ctx: CanvasRenderingContex
         var x=xx(s.ch), y=yy(s.design);
         if (!started){ ctx.moveTo(x,y); started=true; } else ctx.lineTo(x,y);
       });
-      ctx.strokeStyle = '#4FA8FF';
+      ctx.strokeStyle = C.design;
       ctx.lineWidth = 2;
       ctx.stroke();
     }
@@ -214,155 +216,193 @@ function drawCrossfallView(canvas: HTMLCanvasElement, ctx: CanvasRenderingContex
     // true scale (not the data's own min/max) — at 1:1 that range is
     // usually only a few centimetres tall, which is the honest point.
     var topVal = centerVal + (panelH/2)/pxPerMetre, botVal = centerVal - (panelH/2)/pxPerMetre;
-    ctx.fillStyle = '#5B6870';
+    ctx.fillStyle = C.faint;
     ctx.font = '10px IBM Plex Mono';
     ctx.textAlign = 'right';
     ctx.fillText(topVal.toFixed(2), padL-6, top+10);
     ctx.fillText(botVal.toFixed(2), padL-6, top+panelH-2);
   }
 
-  drawMiniProfile(panelTop(0), aligns[idxA].label + ' — existing ground (grey)' + (profA ? ' / design (blue)' : ''),
+  drawMiniProfile(panelTop(0), 'A: ' + captionA + ' — existing ground (grey)' + (profA ? ' / design (blue)' : '') + ' — true scale',
     groundOnlyA, profA ? designOrGroundA : null);
-  drawMiniProfile(panelTop(1), aligns[idxB].label + ' — existing ground (grey)' + (profB ? ' / design (blue)' : ''),
+  drawMiniProfile(panelTop(1), 'B: ' + captionB + ' — existing ground (grey)' + (profB ? ' / design (blue)' : '') + ' — true scale',
     groundOnlyB, profB ? designOrGroundB : null);
 
-  var xfTop = panelTop(2);
-  ctx.strokeStyle = 'rgba(255,255,255,0.14)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(padL, xfTop, plotW, panelH);
-  ctx.fillStyle = '#8A97A0';
-  ctx.font = '11px IBM Plex Mono';
-  ctx.textAlign = 'left';
-  ctx.fillText('Crossfall (B − A) — true scale, same as above', padL, xfTop-7);
-
+  // ---- Cross-section at the chosen chainage (2026-11-08) ----
+  // Owner: "the cross fall should just be a straight line between both
+  // alignments at a perpendicular angle", picked at a driveway design
+  // chainage. The bottom panel used to plot crossfall against chainage;
+  // it now draws the section across the driveway at the marker's
+  // chainage: a straight design line from A's level to B's level, square
+  // across (or at matching chainage, if that method is picked), over the
+  // existing ground along the same line.
   var summaryEl = $('xf-summary-body');
-  if (!series.length){
-    ctx.fillStyle = '#5B6870';
-    ctx.font = '12px IBM Plex Sans';
-    ctx.textAlign = 'center';
-    ctx.fillText('No overlapping ground data between the two alignments.', padL+plotW/2, xfTop+panelH/2);
-    if (summaryEl) summaryEl.innerHTML = 'No overlapping ground data between the two alignments.';
-    return;
+  var worst = series.reduce(function(w: typeof series[number] | null, p){ return (w===null || Math.abs(p.crossfall) > Math.abs(w.crossfall)) ? p : w; }, null);
+  if (state.crossfall.markerChainage === null){
+    // Default to the worst crossfall, or the start if nothing overlaps.
+    state.crossfall.markerChainage = worst ? worst.chainage : 0;
+  }
+  var markerCh = Math.max(0, Math.min(rangeEnd, state.crossfall.markerChainage));
+
+  // Design-chainage picker: A's design points (each chainage once).
+  var pickEl = $<HTMLSelectElement>('xf-design-chainage');
+  if (pickEl){
+    var chs: {ch: number; tag: string}[] = [];
+    (profA ? profA.pvis : []).forEach(function(p){
+      if (p.chainage < -1e-9 || p.chainage > rangeEnd + 1e-9) return;
+      var c = Math.round(p.chainage * 1000) / 1000;
+      var hit = chs.find(function(x){ return Math.abs(x.ch - c) < 1e-6; });
+      var tag = p.template === 'kerb' ? 'kerb' : (p.template === 'layback' ? 'layback' : '');
+      if (hit){ if (!hit.tag) hit.tag = tag; return; }
+      chs.push({ch: c, tag: tag});
+    });
+    chs.sort(function(x, y){ return x.ch - y.ch; });
+    var optsHtml = '<option value="">' + (chs.length ? 'Pick a design chainage…' : 'No design on ' + escapeHtml(nameA) + ' — drag or type below') + '</option>' +
+      chs.map(function(x){ return '<option value="' + x.ch.toFixed(3) + '">' + x.ch.toFixed(2) + ' m' + (x.tag ? ' — ' + x.tag : '') + '</option>'; }).join('');
+    if (pickEl.dataset.sig !== optsHtml){ pickEl.innerHTML = optsHtml; pickEl.dataset.sig = optsHtml; }
+    if (document.activeElement !== pickEl){
+      var match = chs.find(function(x){ return Math.abs(x.ch - markerCh) < 0.0005; });
+      pickEl.value = match ? match.ch.toFixed(3) : '';
+    }
   }
 
-  var cfVals = series.map(function(p){ return p.crossfall; });
-  var cfMin = Math.min.apply(null, cfVals), cfMax = Math.max.apply(null, cfVals);
-  var cfCenter = (cfMin+cfMax)/2;
-  var cfx = chX;
-  function cfy(v: number){ return xfTop + panelH/2 - (v - cfCenter) * pxPerMetre; }
+  var xsTop = panelTop(2);
+  ctx.strokeStyle = C.panelBorder;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(padL, xsTop, plotW, panelH);
 
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(padL, xfTop, plotW, panelH);
-  ctx.clip();
+  // The two ends of the section line.
+  var ptA = pointAtChainage(vertsA, cumA, Math.min(markerCh, totalA));
+  var chB = perpendicular ? chainageSquareAcross(vertsA, cumA, markerCh, vertsB, cumB).chainage : Math.min(markerCh, totalB);
+  var ptB = pointAtChainage(vertsB, cumB, chB);
+  var width = Math.hypot(ptB.x - ptA.x, ptB.y - ptA.y);
+  var rlA = designOrGroundARaw(markerCh), rlB = designOrGroundBRaw(chB);
+  var titleBits = 'Cross-section at chainage ' + markerCh.toFixed(2) + ' — ' + (perpendicular ? 'square across' : 'matching chainage') +
+    ', A to B — ' + (profA || profB ? 'design (blue), ' : '') + 'ground (grey)';
+  var readoutEl = $('xf-marker-readout');
+  if (rlA === null || rlB === null || !(width > 1e-6)){
+    ctx.fillStyle = C.panelLabel; ctx.font = '11px IBM Plex Mono'; ctx.textAlign = 'left';
+    ctx.fillText(titleBits, padL+8, xsTop+16);
+    ctx.fillStyle = C.faint; ctx.font = '12px IBM Plex Sans'; ctx.textAlign = 'center';
+    ctx.fillText('No level on both alignments at this chainage.', padL+plotW/2, xsTop+panelH/2);
+    if (readoutEl) readoutEl.innerHTML = 'No level on both alignments at chainage ' + markerCh.toFixed(2) + '.';
+  } else {
+    // Existing ground along the section line, carried 25% past each end.
+    var ext = width * 0.25;
+    var ux = (ptB.x - ptA.x) / width, uy = (ptB.y - ptA.y) / width;
+    var line2 = [{x: ptA.x - ux*ext, y: ptA.y - uy*ext}, {x: ptB.x + ux*ext, y: ptB.y + uy*ext}];
+    var groundXs: {o: number; z: number | null}[] = [];
+    for (var gi = 0; gi <= 80; gi++){
+      var o = -ext + (width + 2*ext) * gi / 80;
+      groundXs.push({o: o, z: existingElevationAtChainageForVerts(line2, o + ext)});
+    }
+    var zs = [rlA, rlB];
+    groundXs.forEach(function(g){ if (g.z !== null) zs.push(g.z); });
+    var zMin = Math.min.apply(null, zs), zMax = Math.max.apply(null, zs);
+    // Horizontal: the section fills the panel. Vertical: true scale where
+    // it fits; otherwise exaggerated just enough to fit (a 3m-wide section
+    // usually has only tens of mm of fall, so it's said on the chart).
+    var innerL = padL + 70, innerW = plotW - 140;
+    var pxPerM = innerW / (width + 2*ext);
+    var usableH = panelH - 50;
+    var vx = 1;
+    if ((zMax - zMin) * pxPerM > usableH) vx = 1; // taller than the panel at 1:1 — shrink below instead
+    var vScale = pxPerM * vx;
+    if ((zMax - zMin) * vScale > usableH) vScale = usableH / Math.max(zMax - zMin, 1e-6);
+    else if ((zMax - zMin) * vScale < usableH * 0.35){
+      vScale = Math.min(pxPerM * 20, usableH * 0.35 / Math.max(zMax - zMin, 0.005));
+    }
+    var exag = vScale / pxPerM;
+    var exagNote = Math.abs(exag - 1) < 0.05 ? 'true scale' : (exag > 1 ? 'vertical ×' + (exag >= 10 ? Math.round(exag) : exag.toFixed(1)) : 'vertical ×' + exag.toFixed(2));
+    ctx.fillStyle = C.panelLabel; ctx.font = '11px IBM Plex Mono'; ctx.textAlign = 'left';
+    // Narrower windows (the desktop app opens at 1440 wide): drop the
+    // legend from the title rather than run it into the scale note.
+    var titleFit = titleBits;
+    if (ctx.measureText(titleFit).width + ctx.measureText(exagNote).width + 40 > plotW){
+      titleFit = 'Cross-section at ch ' + markerCh.toFixed(2) + ' — ' + (perpendicular ? 'square across' : 'matching chainage') + ', A to B';
+    }
+    ctx.fillText(titleFit, padL+8, xsTop+16);
+    ctx.textAlign = 'right';
+    ctx.fillText(exagNote, padL+plotW-8, xsTop+16);
+    var zMid = (zMin + zMax) / 2, yMid = xsTop + 26 + usableH / 2;
+    function sx(o: number){ return innerL + (o + ext) * pxPerM; }
+    function sy(z: number){ return yMid - (z - zMid) * vScale; }
 
-  // Zero-crossfall reference line, only drawn when it actually falls
-  // within this panel's true-scale visible range.
-  var zeroY = cfy(0);
-  if (zeroY >= xfTop && zeroY <= xfTop+panelH){
-    ctx.beginPath();
-    ctx.moveTo(padL, zeroY); ctx.lineTo(padL+plotW, zeroY);
-    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-    ctx.setLineDash([4,3]);
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    ctx.save();
+    ctx.beginPath(); ctx.rect(padL, xsTop, plotW, panelH); ctx.clip();
+    // Edge verticals at A and B.
+    ctx.strokeStyle = C.grid; ctx.lineWidth = 1; ctx.setLineDash([3,3]);
+    [0, width].forEach(function(o){ ctx.beginPath(); ctx.moveTo(sx(o), xsTop+4); ctx.lineTo(sx(o), xsTop+panelH-18); ctx.stroke(); });
     ctx.setLineDash([]);
+    // Existing ground.
+    ctx.beginPath();
+    var gStarted = false;
+    groundXs.forEach(function(g){
+      if (g.z === null){ gStarted = false; return; }
+      if (!gStarted){ ctx.moveTo(sx(g.o), sy(g.z)); gStarted = true; } else ctx.lineTo(sx(g.o), sy(g.z));
+    });
+    ctx.strokeStyle = C.miniGround; ctx.lineWidth = 1.5; ctx.stroke();
+    // The crossfall: one straight line, A to B.
+    ctx.beginPath(); ctx.moveTo(sx(0), sy(rlA)); ctx.lineTo(sx(width), sy(rlB));
+    ctx.strokeStyle = (profA || profB) ? C.design : C.xfLine; ctx.lineWidth = 2.5; ctx.stroke();
+    [[0, rlA], [width, rlB]].forEach(function(p){
+      ctx.beginPath(); ctx.arc(sx(p[0]), sy(p[1]), 4, 0, Math.PI*2); ctx.fillStyle = C.accent; ctx.fill();
+    });
+    ctx.restore();
+
+    var fall = rlB - rlA, pct = fall / width * 100;
+    ctx.font = '11px IBM Plex Mono';
+    ctx.fillStyle = C.axisText;
+    ctx.textAlign = 'right';
+    ctx.fillText('A ' + rlA.toFixed(3), sx(0) - 8, sy(rlA) + 4);
+    ctx.textAlign = 'left';
+    ctx.fillText('B ' + rlB.toFixed(3), sx(width) + 8, sy(rlB) + 4);
+    ctx.textAlign = 'center';
+    ctx.font = '12px IBM Plex Mono';
+    ctx.fillStyle = C.xfLine;
+    ctx.fillText((fall >= 0 ? '+' : '') + Math.round(fall*1000) + 'mm  (' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%)', sx(width/2), Math.min(sy(rlA), sy(rlB)) - 12);
+    ctx.fillStyle = C.faint;
+    ctx.font = '10px IBM Plex Mono';
+    ctx.fillText(width.toFixed(2) + ' m across', sx(width/2), xsTop + panelH - 6);
+    ctx.textAlign = 'center';
+    ctx.fillText('A', sx(0), xsTop + panelH - 6);
+    ctx.fillText('B', sx(width), xsTop + panelH - 6);
+
+    if (readoutEl){
+      readoutEl.innerHTML =
+        'Chainage ' + markerCh.toFixed(2) + 'm on ' + escapeHtml(nameA) + (perpendicular ? ' (square across to ' + chB.toFixed(2) + 'm on ' + escapeHtml(nameB) + ')' : '') + '<br>' +
+        escapeHtml(nameA) + ' (A) RL ' + rlA.toFixed(3) + ' &nbsp;&nbsp; ' + escapeHtml(nameB) + ' (B) RL ' + rlB.toFixed(3) + '<br>' +
+        'Crossfall ' + (fall>=0?'+':'') + Math.round(fall*1000) + 'mm over ' + width.toFixed(2) + 'm (' + (pct>=0?'+':'') + pct.toFixed(1) + '%)';
+    }
   }
 
-  ctx.beginPath();
-  series.forEach(function(p, i){
-    var x = cfx(p.chainage), y = cfy(p.crossfall);
-    if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-  });
-  ctx.strokeStyle = '#F2A722';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  ctx.restore();
-
-  var cfTopVal = cfCenter + (panelH/2)/pxPerMetre, cfBotVal = cfCenter - (panelH/2)/pxPerMetre;
-  ctx.fillStyle = '#5B6870';
-  ctx.font = '10px IBM Plex Mono';
-  ctx.textAlign = 'right';
-  ctx.fillText(Math.round(cfTopVal*1000)+'mm', padL-6, xfTop+10);
-  ctx.fillText(Math.round(cfBotVal*1000)+'mm', padL-6, xfTop+panelH-2);
-
-  var worst = series.reduce(function(w,p){ return (w===null || Math.abs(p.crossfall) > Math.abs(w.crossfall)) ? p : w; }, null);
   var pctNote = (worst && worst.crossfallPct!==null) ? (' (' + worst.crossfallPct.toFixed(1) + '%)') : '';
   if (summaryEl){
-    summaryEl.innerHTML =
+    summaryEl.innerHTML = !series.length ? 'No overlapping ground data between the two alignments.' :
       'Compared over chainage 0.00–' + rangeEnd.toFixed(2) + 'm.<br>' +
       'Worst crossfall: ' + (worst ? (Math.round(worst.crossfall*1000) + 'mm' + pctNote + ' at chainage ' + worst.chainage.toFixed(2)) : '—') + '<br>' +
-      (profA ? '' : escapeHtml(aligns[idxA].label) + ' has no driveway design enabled — using existing ground.<br>') +
-      (profB ? '' : escapeHtml(aligns[idxB].label) + ' has no driveway design enabled — using existing ground.<br>');
+      (profA ? '' : escapeHtml(nameA) + ' has no driveway design enabled — using existing ground.<br>') +
+      (profB ? '' : escapeHtml(nameB) + ' has no driveway design enabled — using existing ground.<br>');
   }
 
-  // Draggable chainage readout marker (§5.4 Stage 0c item 10) — kept
-  // deliberately as an added overlay on the existing static 3-panel
-  // chart rather than pan/zoom or a standalone chainage picker, per
-  // Thom's own framing of the request (see PLAN.md §5.1). Defaults to
-  // the worst-crossfall chainage the first time this view is drawn
-  // (same convenience as the vehicle scrape check's own default), then
-  // stays wherever it's dragged. Drawn last so it overlays all three
-  // panels; the exact value at its chainage is read directly from
-  // designOrGroundA/B (not sampled from `series`), so it's precise
-  // regardless of the chart's fixed sampling step.
-  var xfMarkerTop = panelTop(0), xfMarkerBottom = xfTop + panelH;
-  if (state.crossfall.markerChainage === null && worst){
-    state.crossfall.markerChainage = worst.chainage;
-  }
-  var markerCh = state.crossfall.markerChainage;
-  var readoutEl = $('xf-marker-readout');
-  // Keep the typed-chainage box in sync with wherever the marker
-  // actually is — dragging updates the box, typing moves the marker
-  // (see its own 'change' listener below) — but never while the user
-  // currently has focus in it, so their own typing isn't clobbered
-  // mid-edit by a redraw triggered from elsewhere.
+  // Chainage marker across the two profile panels (drag it, type a
+  // chainage, or pick a design chainage); the section below follows it.
   var chainageInput = $<HTMLInputElement>('xf-marker-chainage');
   if (chainageInput){
     chainageInput.max = rangeEnd.toFixed(2);
-    if (document.activeElement !== chainageInput){
-      chainageInput.value = markerCh !== null ? markerCh.toFixed(2) : '';
-    }
+    if (document.activeElement !== chainageInput) chainageInput.value = markerCh.toFixed(2);
   }
-  if (markerCh !== null && markerCh >= 0 && markerCh <= rangeEnd){
-    var mx = chX(markerCh);
-    ctx.beginPath();
-    ctx.moveTo(mx, xfMarkerTop);
-    ctx.lineTo(mx, xfMarkerBottom);
-    ctx.strokeStyle = 'rgba(245,243,238,0.85)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(mx, xfMarkerTop-6, 5, 0, Math.PI*2);
-    ctx.fillStyle = '#F26722';
-    ctx.fill();
+  var mTop = panelTop(0), mBottom = panelTop(1) + panelH;
+  var mx = chX(markerCh);
+  ctx.beginPath(); ctx.moveTo(mx, mTop); ctx.lineTo(mx, mBottom);
+  ctx.strokeStyle = C.marker; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.beginPath(); ctx.arc(mx, mTop-6, 5, 0, Math.PI*2); ctx.fillStyle = C.accent; ctx.fill();
+  // Chainage ticks under B's panel, so the marker can be read off.
+  var chStep = niceStep(rangeEnd/8);
+  ctx.fillStyle = C.faint; ctx.font = '10px IBM Plex Mono'; ctx.textAlign = 'center';
+  for (var cv = 0; cv <= rangeEnd + 1e-9; cv += chStep) ctx.fillText(cv.toFixed(chStep >= 1 - 1e-9 ? 0 : (chStep >= 0.1 - 1e-9 ? 1 : 2)), chX(cv), mBottom + 13);
 
-    var mRlA = designOrGroundA(markerCh), mRlB = designOrGroundB(markerCh);
-    if (readoutEl){
-      if (mRlA === null || mRlB === null){
-        readoutEl.innerHTML = 'No ground data for both alignments at chainage ' + markerCh.toFixed(2) + '.';
-      } else {
-        var mCrossfall = mRlB - mRlA;
-        // Perpendicular mode already knows the true separation (the
-        // projection's own offset) — the straight-line widthAt() is
-        // only an approximation of that, which is exactly what this
-        // mode exists to drop, so it's never used here in that case.
-        var mWidth = perpendicular
-          ? chainageOfClosestPoint(vertsB, cumB, pointAtChainage(vertsA, cumA, markerCh)).offset
-          : widthAt(markerCh);
-        var mPctNote = (mWidth !== null && mWidth > 1e-6) ? (' (' + ((mCrossfall/mWidth)*100).toFixed(1) + '%)') : '';
-        readoutEl.innerHTML =
-          'Chainage ' + markerCh.toFixed(2) + 'm<br>' +
-          escapeHtml(aligns[idxA].label) + ' RL ' + mRlA.toFixed(3) + ' &nbsp;&nbsp; ' +
-          escapeHtml(aligns[idxB].label) + ' RL ' + mRlB.toFixed(3) + '<br>' +
-          'Crossfall ' + (mCrossfall>=0?'+':'') + Math.round(mCrossfall*1000) + 'mm' + mPctNote;
-      }
-    }
-  } else if (readoutEl){
-    readoutEl.innerHTML = 'Drag the marker on the chart to read a chainage.';
-  }
-
-  canvas._xfPlotMeta = {padL:padL, plotW:plotW, rangeEnd:rangeEnd};
+  canvas._xfPlotMeta = {padL:padL, plotW:plotW, rangeEnd:rangeEnd, yMax: mBottom + 16};
 }
 
 export function drawProfile(){
@@ -372,7 +412,7 @@ export function drawProfile(){
   canvas.height = container.clientHeight;
   var ctx = canvas.getContext('2d');
   ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.fillStyle = '#12181C';
+  ctx.fillStyle = C.chartBg;
   ctx.fillRect(0,0,canvas.width,canvas.height);
 
   if (isCrossfallVisible()){
@@ -381,7 +421,7 @@ export function drawProfile(){
   }
 
   if (!profileData){
-    ctx.fillStyle = '#5B6870';
+    ctx.fillStyle = C.faint;
     ctx.font = '13px IBM Plex Sans';
     ctx.textAlign = 'center';
     ctx.fillText('Load survey points and an alignment to see the existing terrain.', canvas.width/2, canvas.height/2);
@@ -390,7 +430,7 @@ export function drawProfile(){
 
   var samples = profileData.samples.filter(function(s){ return s.elevation!==null; });
   if (samples.length < 2){
-    ctx.fillStyle = '#5B6870';
+    ctx.fillStyle = C.faint;
     ctx.font = '13px IBM Plex Sans';
     ctx.textAlign = 'center';
     ctx.fillText('Alignment does not cross the surveyed surface.', canvas.width/2, canvas.height/2);
@@ -437,8 +477,8 @@ export function drawProfile(){
   function py(el: number){ return padT + plotH/2 - (el-centerEl)*pxPerUnitY; }
 
   // grid + axis labels
-  ctx.strokeStyle = '#212B30';
-  ctx.fillStyle = '#8A9AA3';
+  ctx.strokeStyle = C.grid;
+  ctx.fillStyle = C.axisText;
   ctx.font = '10.5px IBM Plex Mono';
   var elStep = niceStep(visibleElRange/5);
   var elStart = Math.ceil(visMinEl/elStep)*elStep;
@@ -447,7 +487,7 @@ export function drawProfile(){
     var yy = py(e);
     if (yy < padT-0.5 || yy > padT+plotH+0.5) continue;
     ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(padL+plotW, yy); ctx.stroke();
-    ctx.fillText(e.toFixed(2), padL-8, yy+3);
+    ctx.fillText(e.toFixed(elStep >= 0.01 - 1e-12 ? 2 : 3), padL-8, yy+3);
   }
   var chStep = niceStep(visibleChRange/6);
   var chStart = Math.ceil(visMinCh/chStep)*chStep;
@@ -456,9 +496,11 @@ export function drawProfile(){
     var xx = px(c);
     if (xx < padL-0.5 || xx > padL+plotW+0.5) continue;
     ctx.beginPath(); ctx.moveTo(xx, padT); ctx.lineTo(xx, padT+plotH); ctx.stroke();
-    ctx.fillText(c.toFixed(0), xx, padT+plotH+16);
+    // Enough decimals for the tick spacing, so a zoomed-in axis reads
+    // 4.5, 5.0, 5.5 rather than repeating whole metres (5, 5, 6, 6).
+    ctx.fillText(c.toFixed(chStep >= 1 - 1e-9 ? 0 : (chStep >= 0.1 - 1e-9 ? 1 : 2)), xx, padT+plotH+16);
   }
-  ctx.fillStyle = '#5B6870';
+  ctx.fillStyle = C.faint;
   ctx.textAlign = 'center';
   ctx.fillText('Chainage', padL+plotW/2, canvas.height-8);
   ctx.save();
@@ -471,19 +513,19 @@ export function drawProfile(){
   // the true (1:1) geometry that gets exported to CSV/DXF.
   ctx.textAlign = 'right';
   ctx.font = '11px IBM Plex Mono';
-  ctx.fillStyle = trueScale ? '#F26722' : '#8A9AA3';
+  ctx.fillStyle = trueScale ? C.accent : C.axisText;
   ctx.fillText(trueScale ? 'True scale (1:1)' : ('V.E. ×' + effectiveVE.toFixed(1)), padL+plotW, padT-10);
   if (zoom !== 1 || profileView.centerCh !== null || profileView.centerEl !== null){
-    ctx.fillStyle = '#8A9AA3';
+    ctx.fillStyle = C.axisText;
     ctx.fillText('Zoom ×' + zoom.toFixed(1) + ' — double-click to reset', padL+plotW, padT+7);
   }
   if (state.driveway.enabled){
     ctx.textAlign = 'left';
-    ctx.fillStyle = '#4FA8FF';
+    ctx.fillStyle = C.design;
     ctx.fillText('— Proposed driveway', padL, padT-10);
     if (state.driveway.vehicleCheck.enabled){
       var vcLegendW = ctx.measureText('— Proposed driveway').width;
-      ctx.fillStyle = '#8A9AA3';
+      ctx.fillStyle = C.axisText;
       ctx.fillText('  ┄ vehicle underside (green = clear, red = scrapes)', padL + vcLegendW, padT-10);
     }
   }
@@ -507,7 +549,7 @@ export function drawProfile(){
   ctx.clip();
 
   ctx.setLineDash([4,3]);
-  ctx.strokeStyle = 'rgba(242,103,34,0.55)';
+  ctx.strokeStyle = C.gradeBreak;
   ctx.lineWidth = 1;
   for (var bi=0; bi<breaks.length; bi++){
     var bxx = px(breaks[bi].chainage);
@@ -516,7 +558,7 @@ export function drawProfile(){
   ctx.setLineDash([]);
 
   ctx.beginPath();
-  ctx.strokeStyle = '#D9D6CF';
+  ctx.strokeStyle = C.ground;
   ctx.lineWidth = 2;
   var started = false;
   for (var i2=0;i2<profileData.samples.length;i2++){
@@ -531,11 +573,11 @@ export function drawProfile(){
   ctx.lineTo(px(samples[samples.length-1].chainage), padT+plotH);
   ctx.lineTo(px(samples[0].chainage), padT+plotH);
   ctx.closePath();
-  ctx.fillStyle = 'rgba(217,214,207,0.07)';
+  ctx.fillStyle = C.groundFill;
   ctx.fill();
 
   // Grade-break markers on the ground line.
-  ctx.fillStyle = '#F26722';
+  ctx.fillStyle = C.accent;
   for (var bm=0; bm<breaks.length; bm++){
     var mx = px(breaks[bm].chainage), my = py(breaks[bm].elevation);
     ctx.beginPath(); ctx.arc(mx, my, 3, 0, Math.PI*2); ctx.fill();
@@ -558,9 +600,9 @@ export function drawProfile(){
     var gLabel = (gradePct >= 0 ? '+' : '') + gradePct.toFixed(2) + '%';
     var glx = px(gMidCh), gly = py((gb0.elevation + gb1.elevation) / 2);
     var gtw = ctx.measureText(gLabel).width;
-    ctx.fillStyle = 'rgba(14,14,16,0.72)';
+    ctx.fillStyle = C.labelBg;
     ctx.fillRect(glx - gtw/2 - 3, gly - 20, gtw + 6, 13);
-    ctx.fillStyle = '#F26722';
+    ctx.fillStyle = C.accent;
     ctx.fillText(gLabel, glx, gly - 10);
   }
 
@@ -576,7 +618,7 @@ export function drawProfile(){
       });
       var showIntervalLabels = (pxPerUnitX * intervalVal) > 46;
       ctx.setLineDash([2,2]);
-      ctx.strokeStyle = 'rgba(154,154,158,0.4)';
+      ctx.strokeStyle = C.interval;
       ctx.lineWidth = 1;
       for (var im=0; im<intervalMarks.length; im++){
         var iixx = px(intervalMarks[im].chainage);
@@ -586,7 +628,7 @@ export function drawProfile(){
       for (var im2=0; im2<intervalMarks.length; im2++){
         var im2m = intervalMarks[im2];
         var imxx = px(im2m.chainage), imyy = py(im2m.elevation);
-        ctx.fillStyle = '#C7C5C0';
+        ctx.fillStyle = C.intervalText;
         ctx.beginPath(); ctx.arc(imxx, imyy, 2, 0, Math.PI*2); ctx.fill();
         if (showIntervalLabels){
           ctx.font = '9px IBM Plex Mono';
@@ -615,7 +657,7 @@ export function drawProfile(){
     ctx.rect(padL, padT, plotW, plotH);
     ctx.clip();
     ctx.setLineDash([4,3]);
-    ctx.strokeStyle = '#8A8A90';
+    ctx.strokeStyle = C.datum;
     ctx.lineWidth = 1.25;
     ctx.beginPath();
     ctx.moveTo(padL, datumY);
@@ -623,7 +665,7 @@ export function drawProfile(){
     ctx.stroke();
     ctx.setLineDash([]);
     ctx.font = '10px IBM Plex Mono';
-    ctx.fillStyle = '#8A8A90';
+    ctx.fillStyle = C.datum;
     ctx.textAlign = 'left';
     ctx.fillText('DATUM RL ' + datumRL.toFixed(3), padL+4, datumY-4);
     ctx.restore();
@@ -645,7 +687,7 @@ export function drawProfile(){
       // down instead of being recomputed there.
       var vcTemplate = null, vcRes = null;
       if (state.driveway.vehicleCheck.enabled && state.driveway.vehicleCheck.sweepChainage !== null){
-        vcTemplate = VEHICLE_TEMPLATES[state.driveway.vehicleCheck.model];
+        vcTemplate = activeVehicleTemplate();
         vcRes = sweepVehicleTemplateFrom(vcTemplate, state.driveway.vehicleCheck.sweepChainage,
           function(ch){ return driveGroundRLAt(dwProfile, ch); }, undefined, state.driveway.vehicleCheck.flipped);
         if (vcRes){
@@ -659,7 +701,7 @@ export function drawProfile(){
         var dleg = dwProfile.legs[dl];
         var dwBad = dwChecks[dl].exceeds;
         ctx.beginPath();
-        ctx.strokeStyle = dwBad ? '#E0574A' : '#4FA8FF';
+        ctx.strokeStyle = dwBad ? C.bad : C.design;
         ctx.lineWidth = 2.5;
         ctx.moveTo(px(dleg.from.chainage), py(dleg.from.rl));
         ctx.lineTo(px(dleg.to.chainage), py(dleg.to.rl));
@@ -669,10 +711,10 @@ export function drawProfile(){
         var dpv = dwProfile.pvis[dp];
         if (dpv.chainage < visMinCh || dpv.chainage > visMaxCh) continue;
         var dpx = px(dpv.chainage), dpy = py(dpv.rl);
-        ctx.fillStyle = '#4FA8FF';
+        ctx.fillStyle = C.design;
         ctx.beginPath(); ctx.arc(dpx, dpy, 3.5, 0, Math.PI*2); ctx.fill();
         ctx.lineWidth = 1;
-        ctx.strokeStyle = '#0d0d0f';
+        ctx.strokeStyle = C.pviStroke;
         ctx.stroke();
       }
       ctx.font = '10px IBM Plex Mono';
@@ -695,9 +737,9 @@ export function drawProfile(){
           dglabel = (gleg.grade>=0?'+':'') + gleg.grade.toFixed(2) + '%';
         }
         var dgw = ctx.measureText(dglabel).width;
-        ctx.fillStyle = 'rgba(14,14,16,0.72)';
+        ctx.fillStyle = C.labelBg;
         ctx.fillRect(dgx-dgw/2-3, dgy+6, dgw+6, 13);
-        ctx.fillStyle = '#4FA8FF';
+        ctx.fillStyle = C.design;
         ctx.fillText(dglabel, dgx, dgy+16);
       }
     }
@@ -711,7 +753,7 @@ export function drawProfile(){
     // driveway design line uses, so it always reads against the
     // design, not the raw existing ground.
     if (vcRes){
-        var vcColor = vcRes.scrapes ? '#E0574A' : '#3ECF8E';
+        var vcColor = vcRes.scrapes ? C.bad : C.ok;
         var vcN = vcRes.samples.length;
         // Not necessarily "front"/"rear" — which physical wheel sits at
         // sweepChainage vs. sweepChainage+wheelbase depends on
@@ -752,10 +794,10 @@ export function drawProfile(){
         [vcWheelACh, vcWheelBCh].forEach(function(wch){
           var wrl = driveGroundRLAt(dwProfile, wch);
           if (wrl === null) return;
-          ctx.fillStyle = '#1a1a1c';
+          ctx.fillStyle = C.tire;
           ctx.beginPath(); ctx.arc(px(wch), py(wrl), vcWheelR, 0, Math.PI*2); ctx.fill();
           ctx.lineWidth = 1.25; ctx.strokeStyle = vcColor; ctx.stroke();
-          ctx.fillStyle = '#5a5a60';
+          ctx.fillStyle = C.hub;
           ctx.beginPath(); ctx.arc(px(wch), py(wrl), vcWheelR*0.42, 0, Math.PI*2); ctx.fill();
         });
         if (vcRes.worstChainage !== null && vcRes.worstChainage >= visMinCh && vcRes.worstChainage <= visMaxCh){
@@ -764,7 +806,7 @@ export function drawProfile(){
           ctx.font = '10px IBM Plex Mono';
           ctx.textAlign = 'center';
           var vcLw = ctx.measureText(vcLabel).width;
-          ctx.fillStyle = 'rgba(14,14,16,0.78)';
+          ctx.fillStyle = C.labelBgStrong;
           ctx.fillRect(vcLx-vcLw/2-3, vcLy-30, vcLw+6, 13);
           ctx.fillStyle = vcColor;
           ctx.fillText(vcLabel, vcLx, vcLy-20);
@@ -778,7 +820,7 @@ export function drawProfile(){
   // closely-spaced breaks don't overlap — these live in the bottom
   // margin, outside the plot rectangle, so they're drawn unclipped.
   ctx.font = '10px IBM Plex Mono';
-  ctx.fillStyle = '#F26722';
+  ctx.fillStyle = C.accent;
   for (var bl=0; bl<breaks.length; bl++){
     var lx = px(breaks[bl].chainage);
     ctx.save();
@@ -898,11 +940,12 @@ $<HTMLCanvasElement>('profile-canvas').addEventListener('dblclick', function(){
 // regular long-section view and isn't kept current while this view
 // is showing.
 // ------------------------------------------------------------
-function crossfallChainageFromEvent(e: {clientX: number}): number | null {
+function crossfallChainageFromEvent(e: {clientX: number; clientY?: number}): number | null {
   var canvas = $<HTMLCanvasElement>('profile-canvas');
   var meta = canvas._xfPlotMeta;
   if (!meta) return null;
   var rect = canvas.getBoundingClientRect();
+  if (meta.yMax !== undefined && e.clientY !== undefined && e.clientY - rect.top > meta.yMax) return null;
   var mx = e.clientX - rect.left;
   var ch = ((mx - meta.padL) / meta.plotW) * meta.rangeEnd;
   return Math.max(0, Math.min(meta.rangeEnd, ch));

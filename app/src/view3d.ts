@@ -5,9 +5,12 @@ import { $ } from './dom.ts';
 import { state, toWorld } from './state.ts';
 import { rampColor } from './colorramp.ts';
 import { elevationAt } from './geometry/tin.ts';
-import { triIndex } from './longsection.ts';
+import { triIndex, cumulativeChainages } from './longsection.ts';
+import { pointAtChainage } from './geometry/chainage.ts';
 import { isProfileVisible, is3DVisible } from './viewstate.ts';
 import { drawProfile } from './rendering.ts';
+import { C, onThemeChange } from './theme.ts';
+import { resetViewCube, renderViewCube, viewCubeHitTest, setViewCubeHighlight, isOverViewCube, VIEWCUBE_SIZE, VIEWCUBE_MARGIN_RIGHT, VIEWCUBE_MARGIN_TOP } from './viewcube.ts';
 
 // Post three.js version bump (PLAN.md Stage 2 checkpoint 5, this
 // session): newer three.js defaults ColorManagement.enabled to true,
@@ -33,19 +36,34 @@ interface ThreeState {
   terrainMesh: THREE.Mesh | null;
   wireMesh: THREE.LineSegments | null;
   pointsMesh: THREE.Points | null;
-  alignmentLine: THREE.Line | null;
+  breaklineMesh: THREE.LineSegments | null;
+  alignmentLine: THREE.Group | null;
   hoverMarker: THREE.Group | null;
 }
 
-export var three: ThreeState = { scene:null, camera:null, renderer:null, terrainMesh:null, wireMesh:null, pointsMesh:null, alignmentLine:null, hoverMarker:null };
+export var three: ThreeState = { scene:null, camera:null, renderer:null, terrainMesh:null, wireMesh:null, pointsMesh:null, breaklineMesh:null, alignmentLine:null, hoverMarker:null };
 var orbit = { radius: 100, theta: Math.PI/4, phi: Math.PI/3.2, target: new THREE.Vector3(0,0,0) };
 var dragging = false, panning = false, lastX=0, lastY=0, downX=0, downY=0, downOnCanvas=false;
 var raycaster = new THREE.Raycaster();
 
+var haloMatRef: THREE.MeshBasicMaterial | null = null;
+
+// Light/dark theme switch: recolour the scene in place (no rebuild).
+onThemeChange(function(){
+  if (!three.scene) return;
+  three.scene.background = new THREE.Color(C.sceneBg);
+  if (three.wireMesh) (three.wireMesh.material as THREE.LineBasicMaterial).color.setHex(C.wire);
+  if (three.pointsMesh) (three.pointsMesh.material as THREE.PointsMaterial).color.setHex(C.points);
+  if (three.breaklineMesh) (three.breaklineMesh.material as THREE.LineBasicMaterial).color.setHex(C.breakline);
+  if (haloMatRef) haloMatRef.color.setHex(C.halo);
+  resetViewCube();
+  requestRender();
+});
+
 export function initThree(){
   var container = $('viewport-3d');
   three.scene = new THREE.Scene();
-  three.scene.background = new THREE.Color(0x0E0E10);
+  three.scene.background = new THREE.Color(C.sceneBg);
 
   three.camera = new THREE.PerspectiveCamera(45, container.clientWidth/container.clientHeight, 0.1, 100000);
   updateCameraFromOrbit();
@@ -85,7 +103,8 @@ export function initThree(){
   // always reads through the terrain rather than getting buried in it.
   // Created once (as a group, scaled as a unit), hidden until first used.
   var haloGeo = new THREE.SphereGeometry(1.4, 16, 12);
-  var haloMat = new THREE.MeshBasicMaterial({color:0x0E0E10, depthTest:false, transparent:true, opacity:0.55});
+  var haloMat = new THREE.MeshBasicMaterial({color:C.halo, depthTest:false, transparent:true, opacity:0.55});
+  haloMatRef = haloMat;
   var halo = new THREE.Mesh(haloGeo, haloMat);
   var coreGeo = new THREE.SphereGeometry(1, 18, 14);
   var coreMat = new THREE.MeshBasicMaterial({color:0xF26722, depthTest:false});
@@ -106,13 +125,28 @@ export function initThree(){
   window.addEventListener('pointerup', function(e: PointerEvent){
     if (dragging && downOnCanvas){
       var moved = Math.sqrt(Math.pow(e.clientX-downX,2) + Math.pow(e.clientY-downY,2));
-      if (moved < 4) handleTerrainClick(e);
+      if (moved < 4){
+        var cubeHit = viewCubeHitTest(three.renderer.domElement, e.clientX, e.clientY);
+        if (cubeHit) handleViewCubeClick(cubeHit);
+        else if (!isOverViewCube(three.renderer.domElement, e.clientX, e.clientY)) handleTerrainClick(e);
+      }
     }
     dragging = false;
     downOnCanvas = false;
   });
+  dom.addEventListener('pointermove', function(e: PointerEvent){
+    if (dragging) return;
+    var hit = state.points.length ? viewCubeHitTest(dom, e.clientX, e.clientY) : null;
+    dom.style.cursor = hit ? 'pointer' : '';
+    if (setViewCubeHighlight(hit)) requestRender();
+  });
+  dom.addEventListener('pointerleave', function(){
+    dom.style.cursor = '';
+    if (setViewCubeHighlight(null)) requestRender();
+  });
   window.addEventListener('pointermove', function(e: PointerEvent){
     if (!dragging) return;
+    cancelOrbitAnimation();
     var dx = e.clientX-lastX, dy = e.clientY-lastY;
     lastX = e.clientX; lastY = e.clientY;
     if (panning){
@@ -126,12 +160,13 @@ export function initThree(){
     } else {
       orbit.theta -= dx * 0.006;
       orbit.phi -= dy * 0.006;
-      orbit.phi = Math.max(0.05, Math.min(Math.PI-0.05, orbit.phi));
+      orbit.phi = Math.max(SNAP_EPS, Math.min(Math.PI-SNAP_EPS, orbit.phi));
     }
     updateCameraFromOrbit();
   });
   dom.addEventListener('wheel', function(e: WheelEvent){
     e.preventDefault();
+    cancelOrbitAnimation();
     orbit.radius *= (1 + e.deltaY*0.0012);
     orbit.radius = Math.max(1, Math.min(100000, orbit.radius));
     updateCameraFromOrbit();
@@ -139,7 +174,85 @@ export function initThree(){
   dom.addEventListener('contextmenu', function(e: Event){ e.preventDefault(); });
 
   window.addEventListener('resize', onResize);
+  buildViewButtons(container);
   requestRender();
+}
+
+// Home (default 3/4 view, whole surface) and Zoom extents (whole surface,
+// current viewing angle) — small buttons under the orientation cube.
+function buildViewButtons(container: HTMLElement){
+  var wrap = document.createElement('div');
+  wrap.id = 'view3d-buttons';
+  wrap.style.cssText = 'position:absolute;display:none;gap:6px;z-index:4;justify-content:center;' +
+    'top:' + (VIEWCUBE_MARGIN_TOP + VIEWCUBE_SIZE + 4) + 'px;right:' + VIEWCUBE_MARGIN_RIGHT + 'px;width:' + VIEWCUBE_SIZE + 'px;';
+  function mk(id: string, title: string, svg: string, onClick: () => void){
+    var b = document.createElement('button');
+    b.id = id; b.type = 'button'; b.title = title; b.setAttribute('aria-label', title);
+    b.className = 'view3d-btn';
+    b.innerHTML = svg;
+    b.addEventListener('click', onClick);
+    wrap.appendChild(b);
+  }
+  mk('btn-view-home', 'Home view (3/4 view of the whole surface)',
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h5v-6h4v6h5V10"/></svg>',
+    function(){ animateToFit(DEFAULT_THETA, DEFAULT_PHI); });
+  mk('btn-view-extents', 'Centre the whole surface in view (zoom extents)',
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/><circle cx="12" cy="12" r="2.2"/></svg>',
+    function(){ animateToFit(orbit.theta, orbit.phi); });
+  container.appendChild(wrap);
+}
+
+var DEFAULT_THETA = Math.PI/4, DEFAULT_PHI = Math.PI/3.2;
+
+// Smoothly moves the camera to a new orbit (angles, and optionally
+// radius/target). The shorter way round is taken for theta. Any user
+// drag/scroll cancels it.
+var orbitAnim: number | null = null;
+function cancelOrbitAnimation(){
+  if (orbitAnim !== null){ cancelAnimationFrame(orbitAnim); orbitAnim = null; }
+}
+function animateOrbitTo(theta: number, phi: number, radius?: number, target?: THREE.Vector3){
+  cancelOrbitAnimation();
+  var t0 = performance.now(), dur = 320;
+  var th0 = orbit.theta, ph0 = orbit.phi, r0 = orbit.radius, tg0 = orbit.target.clone();
+  var dTh = theta - th0;
+  dTh = Math.atan2(Math.sin(dTh), Math.cos(dTh));
+  var r1 = radius === undefined ? r0 : radius;
+  var tg1 = target ? target.clone() : tg0.clone();
+  function step(now: number){
+    var k = Math.min(1, (now - t0)/dur);
+    var e = k < 0.5 ? 2*k*k : 1 - Math.pow(-2*k + 2, 2)/2; // ease in-out
+    orbit.theta = th0 + dTh*e;
+    orbit.phi = ph0 + (phi - ph0)*e;
+    orbit.radius = r0 + (r1 - r0)*e;
+    orbit.target.lerpVectors(tg0, tg1, e);
+    updateCameraFromOrbit();
+    orbitAnim = k < 1 ? requestAnimationFrame(step) : null;
+  }
+  orbitAnim = requestAnimationFrame(step);
+}
+function animateToFit(theta: number, phi: number){
+  if (!state.points.length) return;
+  var fit = computeFit();
+  animateOrbitTo(theta, phi, fit.radius, fit.target);
+}
+
+// Orientation-cube click: face/edge/corner -> look from that direction;
+// compass letter -> look from that side, keeping the current tilt.
+var SNAP_EPS = 1e-3;
+function handleViewCubeClick(hit: import('./viewcube.ts').ViewCubeHit){
+  if (hit.kind === 'compass'){
+    var th = hit.letter === 'N' ? Math.PI : hit.letter === 'E' ? Math.PI/2 : hit.letter === 'W' ? -Math.PI/2 : 0;
+    var ph = Math.max(0.05, Math.min(Math.PI/2, orbit.phi));
+    animateOrbitTo(th, ph);
+    return;
+  }
+  var d = hit.dir; // from target toward the camera, in world axes
+  var phi = Math.acos(Math.max(-1, Math.min(1, d.y)));
+  phi = Math.max(SNAP_EPS, Math.min(Math.PI - SNAP_EPS, phi));
+  // Straight down/up: keep north at the top of the screen.
+  var theta = (Math.abs(d.x) < 1e-9 && Math.abs(d.z) < 1e-9) ? 0 : Math.atan2(d.x, d.z);
+  animateOrbitTo(theta, phi);
 }
 
 function updateCameraFromOrbit(){
@@ -174,12 +287,19 @@ export function requestRender(){
   requestAnimationFrame(function(){
     renderQueued = false;
     three.renderer.render(three.scene, three.camera);
+    var hasData = state.points.length > 0;
+    if (hasData) renderViewCube(three.renderer, three.camera);
+    var btns = document.getElementById('view3d-buttons');
+    if (btns) btns.style.display = hasData ? 'flex' : 'none';
   });
 }
 
 export function clearGroup(obj: Disposable3D | null){
   if (!obj) return;
   if (obj.parent) obj.parent.remove(obj);
+  // A group (e.g. the alignment line's solid + dashed runs) owns its
+  // children's GPU resources too.
+  for (var ci=obj.children.length-1; ci>=0; ci--) clearGroup(obj.children[ci] as Disposable3D);
   if (obj.geometry) obj.geometry.dispose();
   if (obj.material){
     if (Array.isArray(obj.material)) obj.material.forEach(function(m: THREE.Material){ m.dispose(); });
@@ -192,6 +312,7 @@ export function rebuildTerrainMesh(){
   clearGroup(three.terrainMesh);
   clearGroup(three.wireMesh);
   clearGroup(three.pointsMesh);
+  clearGroup(three.breaklineMesh); three.breaklineMesh = null;
   if (!state.points.length || !state.triangles.length) return;
 
   var ve = state.verticalExaggeration;
@@ -224,7 +345,7 @@ export function rebuildTerrainMesh(){
   three.scene.add(three.terrainMesh);
 
   var wireGeo = new THREE.WireframeGeometry(geo);
-  var wireMat = new THREE.LineBasicMaterial({color:0x0c1113, transparent:true, opacity:0.55});
+  var wireMat = new THREE.LineBasicMaterial({color:C.wire, transparent:true, opacity:0.55});
   three.wireMesh = new THREE.LineSegments(wireGeo, wireMat);
   three.wireMesh.visible = $<HTMLInputElement>('chk-wireframe').checked;
   three.scene.add(three.wireMesh);
@@ -232,7 +353,34 @@ export function rebuildTerrainMesh(){
   if ($<HTMLInputElement>('chk-points').checked) buildPointsMesh();
 
   fitCameraToData();
+  buildBreaklineMesh(); // after fitCameraToData, which sets state.modelSpan
   rebuildAlignmentLine();
+}
+
+// The breakline edges actually built into the current surface
+// (state.constraintEdges, 2026-11-08), drawn as lines lifted a hair off
+// it so they don't z-fight with the triangles they're edges of.
+export function buildBreaklineMesh(){
+  clearGroup(three.breaklineMesh); three.breaklineMesh = null;
+  var edges = state.constraintEdges;
+  if (!edges || !edges.length || !state.points.length || !$<HTMLInputElement>('chk-show-breaklines').checked) return;
+  var ve = state.verticalExaggeration;
+  var lift = Math.max((state.modelSpan || 100) * 0.0003, 0.01);
+  var positions = new Float32Array(edges.length*3);
+  for (var i=0;i<edges.length;i++){
+    var p = state.points[edges[i]];
+    if (!p) return; // edges belong to a different point set — never draw garbage
+    positions[i*3+0] = p.x;
+    positions[i*3+1] = (p.z - state.zMin)*ve + lift;
+    positions[i*3+2] = -p.y;
+  }
+  var geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
+  var mat = new THREE.LineBasicMaterial({color:C.breakline, transparent:true, opacity:0.45}); // subtle: reads as linework, not a highlight
+  three.breaklineMesh = new THREE.LineSegments(geo, mat);
+  three.breaklineMesh.renderOrder = 2;
+  three.scene.add(three.breaklineMesh);
+  requestRender();
 }
 
 export function buildPointsMesh(){
@@ -247,7 +395,7 @@ export function buildPointsMesh(){
     positions[i*3+2] = -p.y;
   }
   geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
-  var mat = new THREE.PointsMaterial({color:0xE8E3D8, size:2.2, sizeAttenuation:false});
+  var mat = new THREE.PointsMaterial({color:C.points, size:2.2, sizeAttenuation:false});
   three.pointsMesh = new THREE.Points(geo, mat);
   three.scene.add(three.pointsMesh);
   requestRender();
@@ -255,7 +403,8 @@ export function buildPointsMesh(){
 
 export function rebuildAlignmentLine(){
   clearGroup(three.alignmentLine);
-  if (!state.polyline || !$<HTMLInputElement>('chk-alignment').checked || !triIndex) return;
+  three.alignmentLine = null;
+  if (!state.polyline || state.polyline.length < 2 || !$<HTMLInputElement>('chk-alignment').checked || !triIndex) return;
   var ve = state.verticalExaggeration;
   // A fixed +0.05 offset z-fights against the terrain once the model span
   // is large relative to it (depth-buffer precision at typical camera
@@ -264,23 +413,69 @@ export function rebuildAlignmentLine(){
   // on top, regardless of view angle.
   var span = state.modelSpan || 100;
   var offset = Math.max(span * 0.0005, 0.02);
-  var pts: THREE.Vector3[] = [];
-  for (var i=0;i<state.polyline.length;i++){
-    var v = state.polyline[i];
-    var z = elevationAt(v.x, v.y, state.points, state.triangles, triIndex);
-    if (z===null) continue;
-    pts.push(new THREE.Vector3(v.x, (z-state.zMin)*ve + offset, -v.y));
+  // Draped along the whole alignment, not just joined vertex to vertex:
+  // every vertex plus a dense run of samples in between, each read off
+  // the TIN, so the line follows the ground through bends instead of
+  // cutting straight chords through (or floating over) it. Stretches
+  // that leave the triangulated surface used to be dropped — and the
+  // vertices either side joined straight across the gap, which is what
+  // made the line look broken at corners sitting off the edge of the
+  // survey. They're now drawn too, dashed, held at the nearest known
+  // ground level, so the alignment's full extent always shows.
+  var verts = state.polyline;
+  var cum = cumulativeChainages(verts);
+  var total = cum[cum.length-1];
+  if (total <= 0) return;
+  var step = Math.max(0.1, total/4000);
+  var chs: number[] = cum.slice();
+  for (var c=step; c<total; c+=step) chs.push(c);
+  chs.sort(function(a,b){ return a-b; });
+  var pts: {x: number; y: number; z: number | null}[] = [];
+  var lastCh = -Infinity;
+  for (var i=0;i<chs.length;i++){
+    if (chs[i]-lastCh < 1e-6) continue;
+    lastCh = chs[i];
+    var p = pointAtChainage(verts, cum, chs[i]);
+    pts.push({x:p.x, y:p.y, z: elevationAt(p.x, p.y, state.points, state.triangles, triIndex)});
   }
-  if (pts.length < 2) return;
-  var geo = new THREE.BufferGeometry().setFromPoints(pts);
-  var mat = new THREE.LineBasicMaterial({color:0xF26722, linewidth:2, depthTest:false});
-  three.alignmentLine = new THREE.Line(geo, mat);
-  three.alignmentLine.renderOrder = 999;
-  three.scene.add(three.alignmentLine);
+  // Fill unknown levels from the nearest known one (forward, then back).
+  var filled: number[] = new Array(pts.length);
+  var known: number | null = null;
+  for (var f=0; f<pts.length; f++){ if (pts[f].z !== null) known = pts[f].z; filled[f] = known === null ? NaN : known; }
+  known = null;
+  for (var g=pts.length-1; g>=0; g--){ if (pts[g].z !== null) known = pts[g].z; if (isNaN(filled[g])) filled[g] = known === null ? state.zMin : known; }
+
+  var group = new THREE.Group();
+  group.renderOrder = 999;
+  var solidMat = new THREE.LineBasicMaterial({color:0xF26722, linewidth:2, depthTest:false});
+  var dashMat = new THREE.LineDashedMaterial({color:0xF26722, depthTest:false, transparent:true, opacity:0.6,
+    dashSize: Math.max(span*0.006, 0.2), gapSize: Math.max(span*0.004, 0.12)});
+  function toV(k: number){ return new THREE.Vector3(pts[k].x, (filled[k]-state.zMin)*ve + offset, -pts[k].y); }
+  // Split into runs of on-surface / off-surface samples; adjoining runs
+  // share their boundary sample so the line stays continuous.
+  var runStart = 0;
+  for (var k=1; k<=pts.length; k++){
+    var onPrev = pts[k-1].z !== null;
+    if (k < pts.length && (pts[k].z !== null) === onPrev) continue;
+    var end = Math.min(k, pts.length-1);
+    if (end > runStart){
+      var runPts: THREE.Vector3[] = [];
+      for (var r=runStart; r<=end; r++) runPts.push(toV(r));
+      var geo = new THREE.BufferGeometry().setFromPoints(runPts);
+      var line = new THREE.Line(geo, onPrev ? solidMat : dashMat);
+      if (!onPrev) line.computeLineDistances();
+      line.renderOrder = 999;
+      group.add(line);
+    }
+    runStart = end;
+  }
+  three.alignmentLine = group;
+  three.scene.add(group);
   requestRender();
 }
 
-export function fitCameraToData(){
+// The camera target/radius that frames the whole surface.
+function computeFit(): {target: THREE.Vector3; radius: number; span: number} {
   var minX=Infinity,maxX=-Infinity,minZ=Infinity,maxZ=-Infinity;
   for (var i=0;i<state.points.length;i++){
     var p = state.points[i];
@@ -289,9 +484,14 @@ export function fitCameraToData(){
   }
   var cx = (minX+maxX)/2, cz=(minZ+maxZ)/2;
   var span = Math.max(maxX-minX, maxZ-minZ, 10);
-  state.modelSpan = span; // reused to size the hover marker sensibly regardless of survey coordinate scale
-  orbit.target.set(cx, (state.zMax-state.zMin)*state.verticalExaggeration*0.15, cz);
-  orbit.radius = span * 1.3;
+  return {target: new THREE.Vector3(cx, (state.zMax-state.zMin)*state.verticalExaggeration*0.15, cz), radius: span*1.3, span: span};
+}
+
+export function fitCameraToData(){
+  var fit = computeFit();
+  state.modelSpan = fit.span; // reused to size the hover marker sensibly regardless of survey coordinate scale
+  orbit.target.copy(fit.target);
+  orbit.radius = fit.radius;
   updateCameraFromOrbit();
 }
 

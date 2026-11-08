@@ -14,11 +14,14 @@
 // guarantees each request's own promise settles, once, with that
 // request's own result.
 import TriangulationWorker from './triangulation.worker?worker&inline';
-import { triangulate } from './geometry/tin.ts';
+import { triangulateConstrained, trianglesFromFlat } from './geometry/tin.ts';
 import type { Point3, Triangle } from './types.ts';
 
 interface CancelledError extends Error { cancelled?: boolean; }
-interface PendingEntry { resolve: (tris: ArrayLike<number>) => void; reject: (err: unknown) => void; }
+interface PendingEntry { resolve: (tris: ArrayLike<number>, failed: number) => void; reject: (err: unknown) => void; }
+
+// `failed`: breakline edges that couldn't be forced in (geometry/constrain.ts).
+export interface TriangulateResult { triangles: Triangle[]; failed: number; }
 
 var triangulationWorker: Worker | null = null;
 var triangulationNextId = 1;
@@ -37,7 +40,7 @@ function getTriangulationWorker(): Worker {
     if (!p) return; // cancelled/unknown — nothing to resolve
     delete triangulationPending[id];
     if (e.data.error) p.reject(new Error(e.data.error));
-    else p.resolve(e.data.triangles);
+    else p.resolve(e.data.triangles, e.data.failed || 0);
   };
   w.onerror = function(err){
     // A worker-level error (e.g. a syntax error building the blob) can't
@@ -72,27 +75,27 @@ export function cancelTriangulation(){
 // embed context, an ancient browser) or fail to construct (e.g. a
 // strict CSP blocking blob: workers) — never a hard failure just
 // because the fast path isn't available.
-export function triangulateAsync(points: Point3[]): Promise<Triangle[]> {
+export function triangulateAsync(points: Point3[], edges?: ArrayLike<number> | null): Promise<TriangulateResult> {
   var n = points.length;
-  if (n < 3) return Promise.resolve([]);
+  var edgeList = edges && edges.length ? edges : null;
+  if (n < 3) return Promise.resolve({triangles: [], failed: 0});
   if (!triangulationWorkerSupported()){
-    return Promise.resolve(triangulate(points));
+    return Promise.resolve(triangulateConstrained(points, edgeList));
   }
   return new Promise(function(resolve, reject){
     var worker: Worker;
     try { worker = getTriangulationWorker(); }
-    catch (err) { resolve(triangulate(points)); return; }
+    catch (err) { resolve(triangulateConstrained(points, edgeList)); return; }
     var coords = new Float64Array(n*2);
     for (var i=0;i<n;i++){ coords[2*i]=points[i].x; coords[2*i+1]=points[i].y; }
+    var edgeArr = edgeList ? Uint32Array.from(edgeList) : null;
     var id = triangulationNextId++;
     triangulationPending[id] = {
-      resolve: function(tris){
-        var result: Triangle[] = new Array(tris.length/3);
-        for (var k=0, t=0; k<tris.length; k+=3, t++) result[t] = [tris[k], tris[k+1], tris[k+2]];
-        resolve(result);
-      },
+      resolve: function(tris, failed){ resolve({triangles: trianglesFromFlat(tris), failed: failed}); },
       reject: reject
     };
-    worker.postMessage({id: id, coords: coords}, [coords.buffer]);
+    var transfer: Transferable[] = [coords.buffer];
+    if (edgeArr) transfer.push(edgeArr.buffer);
+    worker.postMessage({id: id, coords: coords, edges: edgeArr}, transfer);
   });
 }

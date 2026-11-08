@@ -17,7 +17,10 @@ export var state = {
   offsetX: 0, offsetY: 0, offsetZ: 0,
   verticalExaggeration: 1.0,
   currentView: '3d',
-  rawPoints: null,    // last-loaded points, unfiltered, uncentered — kept so filters can be re-applied
+  rawPoints: null,
+  rawBreaklines: null,    // last-loaded breaklines (types.ts Breakline), unfiltered, uncentered
+  constraintEdges: null,  // breakline edges actually sent with state.points to the triangulation
+  breaklineStats: null,    // last-loaded points, unfiltered, uncentered — kept so filters can be re-applied
   pointLayers: null,       // [{layer,count}] among rawPoints — only set for DXF-sourced loads
   activePointLayers: null, // Set<layerName> currently included, or null = no layer filtering
   rawAlignments: [],       // [{label, layer, vertices:[{x,y}]}] candidate alignment polylines
@@ -36,9 +39,11 @@ export var state = {
   // the chainage the draggable readout marker is currently sitting at
   // (null until first drawn, when it defaults to the worst-crossfall
   // point — see drawCrossfallView). `projectionMode` defaults to
-  // 'chainage' (the original matching-chainage-value comparison) —
-  // 'perpendicular' is the 2026-09-26 addition, see crossfall.ts.
-  crossfall: { alignA: 0, alignB: 1, markerChainage: null, projectionMode: 'chainage' }
+  // 'perpendicular' (square across the alignments — owner's request,
+  // 2026-11-08). A saved job with no projectionMode (pre-v41) still opens
+  // as 'chainage', its original behaviour (anything but 'perpendicular' is
+  // read as chainage).
+  crossfall: { alignA: 0, alignB: 1, markerChainage: null, projectionMode: 'perpendicular' }
 } as AppState;
 
 export function defaultDrivewayState(): DrivewayState {
@@ -69,7 +74,9 @@ export function defaultDrivewayState(): DrivewayState {
     // turned on, or the model is changed). `flipped` = vehicle
     // reversing (front wheel at `sweepChainage` instead, vehicle faces
     // left) — see driveway/vehicle.ts.
-    vehicleCheck: { enabled: false, model: 'b99', sweepChainage: null, flipped: false },
+    // B85 by default: AS/NZS 2890.1:2004 Figure C1(b) is the template "for
+    // domestic driveways only" — GradeLine's main use (2026-11-08).
+    vehicleCheck: { enabled: false, model: 'b85', sweepChainage: null, flipped: false },
     // Approximate cut/fill volume (§5.4 Stage 0c item 9) — a single
     // corridor width (m) the user enters; null until they do, so the
     // readout prompts for it rather than showing a volume against an
@@ -90,6 +97,19 @@ state.driveway = drivewayStateFor(state.activeAlignmentIndex);
 // Real-world (un-centered) coordinates for a stored point.
 export function toWorld(p: Point3): Point3 {
   return {x: p.x + state.offsetX, y: p.y + state.offsetY, z: p.z};
+}
+
+// "Alignment N" (1-based, in alignment-dropdown order) — the name every
+// long-section export (CSV, DXF, PDF) is saved under, and the prefix
+// shown in the alignment dropdown so the number is visible there too.
+export function alignmentNumberName(i: number): string {
+  return 'Alignment ' + (i + 1);
+}
+// `content` names what the file holds — "Alignment 1 Existing",
+// "Alignment 1 Proposed" or "Alignment 1 Both" (owner's request, 2026-11-07).
+export function activeAlignmentFileName(content: 'existing' | 'proposed' | 'both'): string {
+  var base = state.activeAlignmentIndex >= 0 ? alignmentNumberName(state.activeAlignmentIndex) : 'Long section';
+  return base + ' ' + (content === 'existing' ? 'Existing' : content === 'proposed' ? 'Proposed' : 'Both');
 }
 
 export function currentAlignmentLabel(): string {
